@@ -19,11 +19,22 @@ export type {
   IntegrationResult,
   IntegrationStep,
   StepStatus,
-  Negotiator,
+  Negotiator as NegotiatorInterface,
   ConflictResolution,
   TextualConflictInput,
   SemanticConflictInput,
 } from "./integrator.js";
+export { IntraFleetBus } from "./bus.js";
+export type { BusMessage, BusMessageKind } from "./bus.js";
+export { ScriptConflictResolver } from "./resolver.js";
+export type {
+  ConflictResolver,
+  ConflictFile,
+  ResolutionRequest,
+  ResolutionProposal,
+} from "./resolver.js";
+export { Negotiator } from "./negotiator.js";
+export type { NegotiatorOptions } from "./negotiator.js";
 export type {
   TaskId,
   TaskSpec,
