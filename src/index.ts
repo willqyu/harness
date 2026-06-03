@@ -9,6 +9,21 @@ export { ScriptWorkerRunner, ClaudeAgentRunner } from "./worker.js";
 export type { WorkerFn } from "./worker.js";
 export { Orchestrator } from "./orchestrator.js";
 export type { OrchestratorOptions, TaskOutcome, RunResult } from "./orchestrator.js";
+export { MergeTool } from "./merge.js";
+export type { ConflictReport } from "./merge.js";
+export { execShell } from "./exec.js";
+export type { ExecResult } from "./exec.js";
+export { Integrator } from "./integrator.js";
+export type {
+  IntegratorOptions,
+  IntegrationResult,
+  IntegrationStep,
+  StepStatus,
+  Negotiator,
+  ConflictResolution,
+  TextualConflictInput,
+  SemanticConflictInput,
+} from "./integrator.js";
 export type {
   TaskId,
   TaskSpec,
