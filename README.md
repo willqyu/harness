@@ -9,14 +9,19 @@ Design rationale and roadmap: `~/.claude/plans/realistically-we-can-just-merry-n
 
 ## Status
 
-**M1 — fan-out + DAG (done).** The orchestrator schedules tasks from a dependency
-DAG, spawns each in its own worktree via a pluggable worker runner, records state
-in a branch→worker registry, and produces one branch per task. No integration
-into `main` yet (that is M2).
+End-to-end (M1–M5) plus a CLI, a Claude Code skill, and a live dashboard.
 
-Later milestones: M2 integration pipeline (`git merge-tree` detection, staging
-branch + main-lock, build/test gate), M3 sibling negotiation over an intra-fleet
-bus, M4 semantic conflicts + checkpoint/rehydrate, M5 escalation + observability.
+- **M1 fan-out + DAG** — schedule a dependency DAG to per-branch worktrees.
+- **M2 integration pipeline** — `git merge-tree` conflict detection, serialized
+  merge-train onto a staging branch, test gate after each merge, fast-forward
+  `main` only when green.
+- **M3 negotiation** — intra-fleet bus + bounded-round, test-verified conflict
+  resolution.
+- **M4 semantic conflicts + checkpoint/rehydrate** — a clean merge that breaks
+  the test gate is fixed via the semantic path; idle workers despawn and are
+  rehydrated from durable checkpoints.
+- **M5 escalation + observability** — bounded rounds → orchestrator tie-break →
+  human escalation; typed event stream + persisted integration state.
 
 ## Layout
 
@@ -51,8 +56,39 @@ const result = await new Orchestrator({ repoRoot: process.cwd(), runner, concurr
   ]);
 ```
 
-The real Claude Code worker (`ClaudeAgentRunner`) replaces `ScriptWorkerRunner`
-in a later milestone by spawning a CC agent inside each worktree.
+`ClaudeAgentRunner` is the real worker — it spawns a headless `claude` agent
+inside each worktree (use it in place of `ScriptWorkerRunner`).
+
+## CLI
+
+```bash
+npm run harness -- run tasks.json --repo <target> --concurrency 3 [--dangerous]
+npm run harness -- integrate --repo <target> --test "npm test" --max-rounds 3
+npm run harness -- status --repo <target> [--json]
+npm run harness -- serve  --repo <target> --port 4317   # dashboard
+```
+
+`tasks.json`: `{ "concurrency": 3, "tasks": [ { "id", "branch", "description", "blockedBy"? } ] }`
+(see `examples/tasks.example.json`). After `npm run build`, the `harness` bin
+(`dist/cli.js`) is also available.
+
+## Dashboard
+
+`harness serve` starts a dependency-free web UI (default
+http://127.0.0.1:4317) that polls `/api/status` every 2s and shows workers,
+worktrees, checkpoints, and integration status.
+
+## Claude Code skill
+
+`skills/orchestrate/SKILL.md` lets Claude Code drive all of the above. Install:
+
+```bash
+# symlink (or copy) the skill into your Claude Code skills dir
+mklink /D "%USERPROFILE%\.claude\skills\orchestrate" "C:\code\harness\skills\orchestrate"   # Windows
+ln -s /c/code/harness/skills/orchestrate ~/.claude/skills/orchestrate                         # POSIX
+```
+
+Then ask Claude to "orchestrate" / "parallelize across branches".
 
 ## Develop
 
@@ -60,4 +96,5 @@ in a later milestone by spawning a CC agent inside each worktree.
 npm install
 npm run typecheck
 npm test
+npm run build      # emit dist/ (and the harness bin)
 ```

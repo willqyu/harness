@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { runClaude } from "./claude.js";
 import type { WorkerContext, WorkerResult, WorkerRunner } from "./types.js";
 
 /** A worker may return distilled context to be saved in its checkpoint. */
@@ -73,14 +73,20 @@ export class ClaudeAgentRunner implements WorkerRunner {
   constructor(private readonly opts: ClaudeAgentRunnerOptions = {}) {}
 
   async run(ctx: WorkerContext): Promise<WorkerResult> {
-    const bin = this.opts.bin ?? (process.platform === "win32" ? "claude.cmd" : "claude");
-    const args = this.opts.args ?? ["-p", "--permission-mode", "acceptEdits"];
     const prompt = (this.opts.buildPrompt ?? defaultPrompt)(ctx);
     const log = this.opts.logger ?? (() => {});
 
     const before = await ctx.git.head();
 
-    const proc = await this.spawnAgent(bin, args, ctx.worktree, prompt);
+    const proc = await runClaude({
+      cwd: ctx.worktree,
+      prompt,
+      bin: this.opts.bin,
+      args: this.opts.args,
+      timeoutMs: this.opts.timeoutMs,
+      env: this.opts.env,
+      shell: this.opts.shell,
+    });
     if (proc.code !== 0) {
       return { ok: false, error: `agent exited ${proc.code}: ${proc.stderr.slice(0, 500)}` };
     }
@@ -99,42 +105,6 @@ export class ClaudeAgentRunner implements WorkerRunner {
       return { ok: false, error: "agent produced no commits" };
     }
     return { ok: true, head, context: truncate(proc.stdout) };
-  }
-
-  private spawnAgent(
-    bin: string,
-    args: string[],
-    cwd: string,
-    prompt: string,
-  ): Promise<{ code: number; stdout: string; stderr: string }> {
-    return new Promise((resolve) => {
-      const child = spawn(bin, args, {
-        cwd,
-        shell: this.opts.shell ?? false,
-        env: { ...process.env, ...this.opts.env },
-      });
-      let stdout = "";
-      let stderr = "";
-      child.stdout.on("data", (d) => (stdout += d.toString()));
-      child.stderr.on("data", (d) => (stderr += d.toString()));
-
-      const timeout = setTimeout(() => {
-        child.kill("SIGKILL");
-        stderr += `\n[harness] agent timed out`;
-      }, this.opts.timeoutMs ?? 30 * 60 * 1000);
-
-      child.on("error", (err) => {
-        clearTimeout(timeout);
-        resolve({ code: 127, stdout, stderr: stderr + String(err) });
-      });
-      child.on("close", (code) => {
-        clearTimeout(timeout);
-        resolve({ code: code ?? 0, stdout, stderr });
-      });
-
-      child.stdin.write(prompt);
-      child.stdin.end();
-    });
   }
 }
 

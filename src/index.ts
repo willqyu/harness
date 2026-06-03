@@ -39,6 +39,14 @@ export { CheckpointManager } from "./checkpoint.js";
 export type { Checkpoint } from "./checkpoint.js";
 export { HarnessEvents } from "./events.js";
 export type { HarnessEvent } from "./events.js";
+export { runClaude, defaultClaudeBin } from "./claude.js";
+export type { RunClaudeOptions, RunClaudeResult } from "./claude.js";
+export { ClaudeConflictResolver } from "./claude-resolver.js";
+export type { ClaudeConflictResolverOptions } from "./claude-resolver.js";
+export { readFleetStatus } from "./status.js";
+export type { FleetStatus, IntegrationState } from "./status.js";
+export { startServer } from "./server.js";
+export type { ServerOptions } from "./server.js";
 export type {
   TaskId,
   TaskSpec,

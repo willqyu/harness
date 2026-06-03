@@ -1,0 +1,21 @@
+{
+  "concurrency": 3,
+  "tasks": [
+    {
+      "id": "api",
+      "branch": "feat/users-api",
+      "description": "Add a POST /users endpoint that validates {email, name} and returns 201 with the created user. Include unit tests."
+    },
+    {
+      "id": "schema",
+      "branch": "feat/user-schema",
+      "description": "Define the User type/schema { id: ULID, email: string, name: string, createdAt: RFC3339 } in the shared types module."
+    },
+    {
+      "id": "wire",
+      "branch": "feat/wire-api-schema",
+      "description": "Wire the POST /users endpoint to persist using the User schema. Assumes the schema and api tasks are done.",
+      "blockedBy": ["api", "schema"]
+    }
+  ]
+}
