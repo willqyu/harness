@@ -79,6 +79,8 @@ export interface IntegrationResult {
   promoted: boolean;
   mainHead?: string;
   steps: IntegrationStep[];
+  /** Non-fatal warning, e.g. the main working tree couldn't be synced. */
+  warning?: string;
 }
 
 /**
@@ -168,14 +170,68 @@ export class Integrator {
         }
       }
 
-      // All green — fast-forward main to the staging head.
+      // All green — fast-forward main to the staging head, syncing whatever
+      // working tree has main checked out (so the live repo doesn't go stale).
       const head = await wtGit.head();
-      await this.git.run(["update-ref", `refs/heads/${this.main}`, head]);
+      const { warning } = await this.promoteMain(head);
       this.log(`✔ promoted ${this.main} -> ${head.slice(0, 8)}`);
-      return await this.finish({ promoted: true, mainHead: head, steps });
+      if (warning) this.log(`⚠ ${warning}`);
+      return await this.finish({ promoted: true, mainHead: head, steps, warning });
     } finally {
       await this.wtm.remove(this.integ, { force: true }).catch(() => {});
     }
+  }
+
+  /**
+   * Advance `main` to `head` while keeping the live working tree in sync.
+   *
+   * A bare `update-ref` moves the branch pointer but leaves whatever worktree
+   * has `main` checked out (typically the repo root) sitting at the OLD commit —
+   * so the next `git add -A && commit` there silently reverts the whole
+   * integration. We instead fast-forward that worktree (ref + index + files).
+   * If it has uncommitted changes we don't clobber them: we move the ref but
+   * return a loud warning telling the user to sync before committing.
+   */
+  private async promoteMain(head: string): Promise<{ warning?: string }> {
+    const mainWt = await this.worktreeOnBranch(this.main);
+    if (!mainWt) {
+      // main isn't checked out anywhere — just advance the ref.
+      await this.git.run(["update-ref", `refs/heads/${this.main}`, head]);
+      return {};
+    }
+    try {
+      // Fast-forward the live branch in place: advances the ref AND updates
+      // files+index. Git refuses (rather than clobbers) if uncommitted work
+      // would be overwritten, and ignores non-colliding untracked files
+      // (e.g. our own .harness/), so this is the safe sync mechanism.
+      await new Git(mainWt).run(["merge", "--ff-only", head]);
+      return {};
+    } catch (err) {
+      // Couldn't sync the tree (conflicting local changes, or non-ff). Move the
+      // ref so the promotion still lands, but warn — committing from the stale
+      // tree would otherwise revert the integration.
+      await this.git.run(["update-ref", `refs/heads/${this.main}`, head]);
+      return {
+        warning:
+          `${this.main} promoted to ${head.slice(0, 8)} but the working tree at ${mainWt} ` +
+          `could not be fast-forwarded (likely uncommitted changes: ${String(err).slice(0, 140)}). ` +
+          `Run \`git -C "${mainWt}" stash && git -C "${mainWt}" merge --ff-only ${head.slice(0, 8)}\` ` +
+          `before committing there, else your next commit may revert the integration.`,
+      };
+    }
+  }
+
+  /** Filesystem path of the worktree that has `branch` checked out, or null. */
+  private async worktreeOnBranch(branch: string): Promise<string | null> {
+    const out = await this.git.run(["worktree", "list", "--porcelain"]).catch(() => "");
+    let current: string | null = null;
+    for (const line of out.split("\n")) {
+      if (line.startsWith("worktree ")) current = line.slice("worktree ".length).trim();
+      else if (line.startsWith("branch ") && current) {
+        if (line.slice("branch ".length).trim() === `refs/heads/${branch}`) return current;
+      }
+    }
+    return null;
   }
 
   /** Emit the terminal event and persist the result for the UI to poll. */

@@ -60,6 +60,46 @@
       }
       .ctrl button:hover { border-color: var(--accent); color: var(--accent); }
       .ctrl button.paused { color: var(--run); border-color: var(--run); }
+      .exp { cursor: pointer; user-select: none; }
+      .exp:hover { color: var(--accent); }
+      .caret { display: inline-block; width: 14px; color: var(--muted); }
+      tr.detail > td { padding: 0; background: var(--bg); }
+      .transcript {
+        max-height: 380px; overflow: auto; padding: 10px 16px;
+        font-size: 12px; line-height: 1.55; border-top: 1px solid var(--border);
+      }
+      .ev { margin: 0 0 9px; white-space: pre-wrap; word-break: break-word; }
+      .ev:last-child { margin-bottom: 0; }
+      .tlabel {
+        font-size: 9px; text-transform: uppercase; letter-spacing: 1px;
+        color: var(--muted); opacity: 0.55; margin-right: 7px; vertical-align: 1px;
+      }
+      .ev-thinking { color: var(--muted); font-style: italic; }
+      .ev-text { color: var(--fg); }
+      .ev-tool { color: var(--accent); }
+      .ev-user { color: var(--run); }
+      .transcript .loading { color: var(--muted); padding: 6px 0; }
+      .action-bar { display: flex; gap: 8px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+      .action-bar input, .spawn textarea {
+        background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+        border-radius: 6px; padding: 6px 10px; font: inherit; font-size: 12px;
+      }
+      .action-bar input { flex: 1; min-width: 200px; }
+      .action-bar button {
+        background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+        border-radius: 6px; padding: 6px 14px; font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap;
+      }
+      .action-bar button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+      .action-bar button:disabled { opacity: 0.5; cursor: default; }
+      #integrate-btn.go { border-color: var(--ok); color: var(--ok); }
+      .spawn { padding: 12px 16px; display: grid; gap: 10px; }
+      .spawn textarea { width: 100%; resize: vertical; line-height: 1.5; }
+      .rec {
+        margin: 12px 16px 0; padding: 10px 12px; border-radius: 6px;
+        background: rgba(63,185,80,.12); border: 1px solid rgba(63,185,80,.45); color: var(--ok);
+        font-size: 12px; display: flex; align-items: center; gap: 8px;
+      }
+      .rec b { color: var(--fg); }
     </style>
   </head>
   <body>
@@ -71,12 +111,30 @@
     <main>
       <section class="panel">
         <h2>Integration → main</h2>
+        <div id="integrate-rec"></div>
+        <div class="action-bar">
+          <input id="integrate-test" type="text" placeholder="test gate (optional), e.g. cd frontend && npx tsc -b" />
+          <button id="integrate-btn">Integrate completed branches</button>
+          <span id="integrate-msg" class="muted"></span>
+        </div>
         <div id="integration"><div class="empty">No integration run yet.</div></div>
       </section>
 
       <section class="panel">
         <h2>Workers</h2>
         <div id="workers"><div class="empty">No workers yet.</div></div>
+      </section>
+
+      <section class="panel">
+        <h2>Spawn worker</h2>
+        <div class="spawn">
+          <textarea id="spawn-desc" rows="3" placeholder="Describe the task for a new agent — it gets its own branch + worktree and starts immediately…"></textarea>
+          <div class="action-bar">
+            <input id="spawn-branch" type="text" placeholder="branch name (optional — auto if blank)" />
+            <button id="spawn-btn">Spawn worker</button>
+            <span id="spawn-msg" class="muted"></span>
+          </div>
+        </div>
       </section>
 
       <section class="panel">
@@ -107,18 +165,58 @@
           </div>`;
       }
 
+      // Expanded transcript panels (per branch) + their accumulated state.
+      const expanded = new Set();
+      const logs = new Map(); // branch -> { offset, html }
+
+      function renderEvent(e) {
+        return `<div class="ev ev-${esc(e.kind)}"><span class="tlabel">${esc(e.kind)}</span>${esc(e.text)}</div>`;
+      }
+
       function renderWorkers(workers, inbox) {
         if (!workers.length) return '<div class="empty">No workers yet.</div>';
-        const rows = workers.map((w) => `
-          <tr>
-            <td>${esc(w.branch)}${inbox && inbox[w.branch] && inbox[w.branch].paused ? " " + badge("paused") : ""}</td>
-            <td class="muted">${esc(w.taskId)}</td>
-            <td>${badge(w.state)}</td>
-            <td class="sha">${short(w.head)}</td>
-            <td class="muted">${w.checkpoint ? "✓" : "—"}</td>
-            <td>${controlsCell(w, inbox)}</td>
-          </tr>`).join("");
+        const rows = workers.map((w) => {
+          const b = esc(w.branch);
+          const open = expanded.has(w.branch);
+          const paused = inbox && inbox[w.branch] && inbox[w.branch].paused;
+          const summary = `
+            <tr>
+              <td><span class="exp" data-act="toggle" data-branch="${b}"><span class="caret">${open ? "▾" : "▸"}</span>${esc(w.branch)}</span>${paused ? " " + badge("paused") : ""}</td>
+              <td class="muted">${esc(w.taskId)}</td>
+              <td>${badge(w.state)}</td>
+              <td class="sha">${short(w.head)}</td>
+              <td class="muted">${w.checkpoint ? "✓" : "—"}</td>
+              <td>${controlsCell(w, inbox)}</td>
+            </tr>`;
+          if (!open) return summary;
+          const html = (logs.get(w.branch) || {}).html || '<div class="loading">loading transcript…</div>';
+          return summary + `<tr class="detail"><td colspan="6"><div class="transcript" data-branch="${b}">${html}</div></td></tr>`;
+        }).join("");
         return `<table><thead><tr><th>Branch</th><th>Task</th><th>State</th><th>Head</th><th>Ckpt</th><th>Steer</th></tr></thead><tbody>${rows}</tbody></table>`;
+      }
+
+      async function pollLog(branch) {
+        if (!expanded.has(branch)) return;
+        const st = logs.get(branch) || { offset: 0, html: "" };
+        try {
+          const r = await fetch(`/api/log?branch=${encodeURIComponent(branch)}&offset=${st.offset}`);
+          const c = await r.json();
+          if (typeof c.offset === "number") st.offset = c.offset;
+          if (c.events && c.events.length) {
+            if (st.html.indexOf("loading transcript") >= 0) st.html = "";
+            st.html += c.events.map(renderEvent).join("");
+          } else if (!st.html) {
+            st.html = '<div class="loading">no transcript yet for this agent.</div>';
+          }
+          logs.set(branch, st);
+          const panel = document.querySelector(`.transcript[data-branch="${CSS.escape(branch)}"]`);
+          if (panel) {
+            const atBottom = panel.scrollHeight - panel.scrollTop - panel.clientHeight < 48;
+            panel.innerHTML = st.html;
+            if (atBottom) panel.scrollTop = panel.scrollHeight;
+          }
+        } catch (e) { /* transient */ }
+        if (expanded.has(branch)) setTimeout(() => pollLog(branch), 1500);
       }
 
       async function postJSON(path, body) {
@@ -126,6 +224,21 @@
           await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
         } catch (e) { /* shown as disconnected on next tick */ }
       }
+
+      // Expand/collapse a worker row to stream its agent transcript.
+      document.addEventListener("click", (ev) => {
+        const tog = ev.target.closest('[data-act="toggle"]');
+        if (!tog) return;
+        const branch = tog.dataset.branch;
+        if (expanded.has(branch)) {
+          expanded.delete(branch);
+        } else {
+          expanded.add(branch);
+          if (!logs.has(branch)) logs.set(branch, { offset: 0, html: "" });
+          pollLog(branch);
+        }
+        tick();
+      });
 
       // Event delegation for the per-agent steer controls.
       document.addEventListener("click", (ev) => {
@@ -151,6 +264,75 @@
         if (text) { postJSON("/api/inject", { branch: wrap.dataset.branch, text }); input.value = ""; }
       });
 
+      // POST returning parsed JSON; throws on non-2xx with the server message.
+      async function api(path, body) {
+        const r = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}) });
+        let j = {}; try { j = await r.json(); } catch (e) {}
+        if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+        return j;
+      }
+
+      $("integrate-btn").addEventListener("click", async () => {
+        const btn = $("integrate-btn");
+        const test = $("integrate-test").value.trim();
+        btn.disabled = true; $("integrate-msg").textContent = "starting…";
+        try {
+          await api("/api/integrate", { test });
+          $("integrate-msg").textContent = "integration started — watch the panel below.";
+        } catch (e) {
+          $("integrate-msg").textContent = "✗ " + e.message;
+        } finally {
+          setTimeout(() => { btn.disabled = false; }, 1500);
+          tick();
+        }
+      });
+
+      $("spawn-btn").addEventListener("click", async () => {
+        const desc = $("spawn-desc").value.trim();
+        const branch = $("spawn-branch").value.trim();
+        if (!desc) { $("spawn-msg").textContent = "describe a task first"; return; }
+        const btn = $("spawn-btn");
+        btn.disabled = true; $("spawn-msg").textContent = "spawning…";
+        try {
+          const j = await api("/api/spawn", { description: desc, branch });
+          $("spawn-msg").textContent = "✓ spawned " + j.branch;
+          $("spawn-desc").value = ""; $("spawn-branch").value = "";
+        } catch (e) {
+          $("spawn-msg").textContent = "✗ " + e.message;
+        } finally {
+          btn.disabled = false;
+          setTimeout(tick, 800);
+        }
+      });
+
+      // Recommend integration once every worker is terminal and there are
+      // completed branches not yet folded into main.
+      function renderRecommend(s) {
+        const rec = $("integrate-rec");
+        const btn = $("integrate-btn");
+        const workers = s.workers || [];
+        if (s.integrating) {
+          rec.innerHTML = "";
+          btn.disabled = true; btn.classList.remove("go");
+          btn.textContent = "Integrating…";
+          return;
+        }
+        btn.disabled = false; btn.textContent = "Integrate completed branches";
+        const completed = workers.filter((w) => w.state === "completed");
+        const allTerminal = workers.length > 0 && workers.every((w) => w.state === "completed" || w.state === "failed");
+        const done = new Set(((s.integration && s.integration.steps) || [])
+          .filter((st) => ["merged", "resolved", "ok", "promoted"].includes(String(st.status)))
+          .map((st) => st.branch));
+        const pending = completed.filter((w) => !done.has(w.branch));
+        if (allTerminal && pending.length > 0) {
+          rec.innerHTML = `<div class="rec">▲ <b>${pending.length}</b> branch${pending.length !== 1 ? "es" : ""} finished and ready to integrate into main — ${pending.map((w) => esc(w.branch)).join(", ")}</div>`;
+          btn.classList.add("go");
+        } else {
+          rec.innerHTML = "";
+          btn.classList.remove("go");
+        }
+      }
+
       function renderIntegration(it) {
         if (!it) return '<div class="empty">No integration run yet.</div>';
         const steps = (it.steps || []).map((s) => `
@@ -165,7 +347,10 @@
         const table = steps
           ? `<table><thead><tr><th>Branch</th><th>Result</th><th>Detail</th></tr></thead><tbody>${steps}</tbody></table>`
           : "";
-        return kpi + table;
+        const warn = it.warning
+          ? `<div class="rec" style="background:rgba(248,81,73,.12);border-color:rgba(248,81,73,.5);color:var(--fail)">⚠ ${esc(it.warning)}</div>`
+          : "";
+        return kpi + warn + table;
       }
 
       function renderWorktrees(wts) {
@@ -189,13 +374,23 @@
           $("repo").textContent = s.repoRoot;
           $("updated").textContent = "updated " + new Date(s.generatedAt).toLocaleTimeString();
           $("integration").innerHTML = renderIntegration(s.integration);
+          renderRecommend(s);
 
           // Preserve a half-typed message across the refresh.
           const focused = document.activeElement;
           const typing = focused && focused.matches('[data-role="inject-text"]')
             ? { branch: focused.closest(".ctrl").dataset.branch, value: focused.value, start: focused.selectionStart }
             : null;
+          // Preserve transcript scroll (and stick-to-bottom) across the refresh.
+          const scrolls = {};
+          document.querySelectorAll(".transcript[data-branch]").forEach((p) => {
+            scrolls[p.dataset.branch] = { top: p.scrollTop, atBottom: p.scrollHeight - p.scrollTop - p.clientHeight < 48 };
+          });
           $("workers").innerHTML = renderWorkers(s.workers || [], s.inbox || {});
+          document.querySelectorAll(".transcript[data-branch]").forEach((p) => {
+            const sv = scrolls[p.dataset.branch];
+            if (sv) p.scrollTop = sv.atBottom ? p.scrollHeight : sv.top;
+          });
           if (typing) {
             const sel = document.querySelector(`.ctrl[data-branch="${CSS.escape(typing.branch)}"] [data-role="inject-text"]`);
             if (sel) { sel.value = typing.value; sel.focus(); try { sel.setSelectionRange(typing.start, typing.start); } catch (e) {} }

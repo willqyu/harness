@@ -99,8 +99,7 @@ agent up. This is the file-based substrate peerd uses, scoped to a single agent.
 
 ```bash
 # symlink (or copy) the skill into your Claude Code skills dir
-mklink /D "%USERPROFILE%\.claude\skills\orchestrate" "C:\code\harness\skills\orchestrate"   # Windows
-ln -s /c/code/harness/skills/orchestrate ~/.claude/skills/orchestrate                         # POSIX
+ln -s /home/will/harness/skills/orchestrate ~/.claude/skills/orchestrate
 ```
 
 Then ask Claude to "orchestrate" / "parallelize across branches".

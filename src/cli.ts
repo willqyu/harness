@@ -114,6 +114,7 @@ async function cmdIntegrate(f: Flags): Promise<void> {
 
   console.log(`\nintegration ${result.promoted ? "PROMOTED to main" : "did NOT promote"}`);
   for (const s of result.steps) console.log(`  ${s.branch}: ${s.status}${s.detail ? " — " + s.detail : ""}`);
+  if (result.warning) console.log(`\n⚠ ${result.warning}`);
   if (!result.promoted) process.exitCode = 1;
 }
 
