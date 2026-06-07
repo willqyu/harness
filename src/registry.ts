@@ -12,6 +12,8 @@ export interface RegistryEntry {
   error?: string;
   /** Path to a durable checkpoint snapshot (used for rehydrate in M4). */
   checkpoint?: string;
+  /** Integration priority (1 = highest); set when a supervisor planned a fleet. */
+  priority?: number;
   updatedAt: string;
 }
 

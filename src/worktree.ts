@@ -33,6 +33,16 @@ export class WorktreeManager {
     return wt;
   }
 
+  /** Create a worktree that checks out an EXISTING branch (commits stack onto
+   *  it). Used to continue an un-integrated branch in place. */
+  async addExisting(branch: string): Promise<string> {
+    await mkdir(this.baseDir, { recursive: true });
+    const wt = this.pathFor(branch);
+    await this.remove(branch, { force: true }).catch(() => {}); // clear any stale worktree
+    await this.git.run(["worktree", "add", wt, branch]);
+    return wt;
+  }
+
   /** Remove the worktree directory; the branch ref is retained. */
   async remove(branch: string, opts: { force?: boolean } = {}): Promise<void> {
     const wt = this.pathFor(branch);

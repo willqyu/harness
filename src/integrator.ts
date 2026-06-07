@@ -58,6 +58,13 @@ export interface IntegratorOptions {
   worktreeDir?: string;
   /** Conflict resolver (M3+). When absent, any conflict stops the train. */
   negotiator?: Negotiator;
+  /**
+   * When true, a branch whose conflict can't be resolved is rolled back and
+   * SKIPPED, and the train continues with the remaining branches (so higher-
+   * priority work still lands). Default false: any unresolved conflict halts the
+   * train and leaves main untouched. Used with priority-ordered integration.
+   */
+  continueOnUnresolved?: boolean;
   /** Emits integrate:* / escalate events for the live UI. */
   events?: HarnessEvents;
   /** Where to persist the latest integration result. Default
@@ -142,8 +149,16 @@ export class Integrator {
       });
     };
 
+    // Roll the staging branch back to `good` and skip the offending branch,
+    // so a dropped (low-priority) conflict doesn't poison the rest of the train.
+    const dropAndContinue = async (good: string): Promise<void> => {
+      await wtGit.run(["reset", "--hard", good]).catch(() => {});
+      this.log(`↩ dropped ${this.integ} back to ${good.slice(0, 8)} — skipping unresolved branch`);
+    };
+
     try {
       for (const branch of branches) {
+        const lastGood = await wtGit.head();
         this.log(`⇢ merging ${branch} into ${this.integ}`);
         const merge = await this.mergeTool.mergeInto(wtGit, branch, `integrate ${branch}`);
 
@@ -151,7 +166,11 @@ export class Integrator {
           const step = await this.handleTextualConflict(wtGit, wtPath, branch, merge.conflictedFiles);
           recordStep(step);
           if (step.status !== "resolved") {
-            return await this.finish({ promoted: false, steps }); // train halts; main untouched
+            if (!this.opts.continueOnUnresolved) {
+              return await this.finish({ promoted: false, steps }); // train halts; main untouched
+            }
+            await dropAndContinue(lastGood);
+            continue;
           }
         } else {
           recordStep({ branch, status: "merged" });
@@ -164,7 +183,11 @@ export class Integrator {
             const step = await this.handleSemanticConflict(wtGit, wtPath, branch, t.stdout + t.stderr);
             recordStep(step, true); // overwrite the just-pushed "merged" with the gate outcome
             if (step.status !== "resolved") {
-              return await this.finish({ promoted: false, steps });
+              if (!this.opts.continueOnUnresolved) {
+                return await this.finish({ promoted: false, steps });
+              }
+              await dropAndContinue(lastGood);
+              continue;
             }
           }
         }

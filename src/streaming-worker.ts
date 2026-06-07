@@ -47,8 +47,8 @@ function defaultPrompt(ctx: WorkerContext): string {
     "Implement the task in this worktree. Commit your work INCREMENTALLY — after",
     "each logical step run `git add -A && git commit` with a clear message; do not",
     "wait until the end. A human may send you further instructions or corrections",
-    "as you work; incorporate them and acknowledge briefly. When the task is fully",
-    "done, summarize the key decisions you made.",
+    "as you work; incorporate them and acknowledge briefly. Do NOT write a summary",
+    "or wrap-up at the end — just make the commits and stop when the task is done.",
   ].join("\n");
 }
 

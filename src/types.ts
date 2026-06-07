@@ -11,6 +11,17 @@ export interface TaskSpec {
   description: string;
   /** Task ids that must complete before this one can start. */
   blockedBy?: TaskId[];
+  /**
+   * Relative importance for integration tradeoffs: 1 = highest. When a fleet's
+   * branches conflict, higher-priority branches land first and an unresolvable
+   * lower-priority branch is dropped rather than halting the whole train.
+   */
+  priority?: number;
+  /**
+   * Continue an existing branch in place (check it out and stack commits) rather
+   * than creating a fresh branch. Used to extend an un-integrated task.
+   */
+  attachBranch?: boolean;
 }
 
 export type TaskState = "pending" | "running" | "completed" | "failed";

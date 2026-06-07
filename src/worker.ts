@@ -61,8 +61,8 @@ function defaultPrompt(ctx: WorkerContext): string {
     "after each logical step or working sub-change, run `git add -A && git commit`",
     "with a clear message — do NOT wait until the very end to make a single commit.",
     "Frequent commits keep your progress safe and make integration easier.",
-    "Keep the change scoped to this task. When done, briefly state the key decisions",
-    "you made (these are saved as your checkpoint context).",
+    "Keep the change scoped to this task. Do NOT write a summary or wrap-up of your",
+    "work at the end — just make the commits and stop when the task is done.",
   ].join("\n");
 }
 

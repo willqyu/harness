@@ -4,17 +4,22 @@ import { Registry, type RegistryEntry } from "./registry.js";
 import { WorktreeManager, type WorktreeInfo } from "./worktree.js";
 import { CheckpointManager, type Checkpoint } from "./checkpoint.js";
 import { InboxManager } from "./inbox.js";
+import { latestActivityAt } from "./transcript.js";
+import { Git } from "./git.js";
 import type { IntegrationResult } from "./integrator.js";
 
 export interface IntegrationState extends IntegrationResult {
   updatedAt: string;
 }
 
+/** A worker record plus its last activity and whether its branch is in main. */
+export type WorkerStatus = RegistryEntry & { lastActivityAt?: string; merged?: boolean };
+
 export interface FleetStatus {
   repoRoot: string;
   generatedAt: string;
   /** Per-branch worker records (pending/running/completed/failed). */
-  workers: RegistryEntry[];
+  workers: WorkerStatus[];
   /** Live git worktrees (including main). */
   worktrees: WorktreeInfo[];
   /** Durable worker checkpoints. */
@@ -23,6 +28,8 @@ export interface FleetStatus {
   integration: IntegrationState | null;
   /** Per-branch interaction state (paused + queued message count). */
   inbox: Record<string, { paused: boolean; count: number }>;
+  /** Primary working tree (repo root): current branch + uncommitted-change count. */
+  repo: { branch: string; dirty: boolean; changes: number };
 }
 
 export interface FleetStatusPaths {
@@ -51,13 +58,27 @@ export async function readFleetStatus(repoRoot: string, paths: FleetStatusPaths 
     integration = null;
   }
 
-  const workers = registry.all();
   const inboxes = new InboxManager(repoRoot);
+  const git = new Git(repoRoot);
+  const mainRef = (await git.tryRun(["rev-parse", "--verify", "--quiet", "main"])).code === 0 ? "main" : "HEAD";
   const inbox: Record<string, { paused: boolean; count: number }> = {};
-  for (const w of workers) {
+  const workers: WorkerStatus[] = [];
+  for (const w of registry.all()) {
     const s = await inboxes.state(w.branch);
     if (s.count > 0) inbox[w.branch] = s;
+    // Only running agents are still emitting transcript; skip the stat otherwise.
+    const lastActivityAt = w.state === "running" ? await latestActivityAt(repoRoot, w.branch) : null;
+    // Whether this branch has already landed in main (Extend is then disabled).
+    const merged = w.head
+      ? (await git.tryRun(["merge-base", "--is-ancestor", w.head, mainRef])).code === 0
+      : false;
+    workers.push({ ...w, ...(lastActivityAt ? { lastActivityAt } : {}), merged });
   }
+
+  // Primary working tree state — drives the per-worker checkout button.
+  const currentBranch = (await git.tryRun(["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim() || "HEAD";
+  const porcelain = (await git.tryRun(["status", "--porcelain"])).stdout;
+  const changes = porcelain.split("\n").filter((l) => l.trim()).length;
 
   return {
     repoRoot,
@@ -67,5 +88,6 @@ export async function readFleetStatus(repoRoot: string, paths: FleetStatusPaths 
     checkpoints: await cpm.list(),
     integration,
     inbox,
+    repo: { branch: currentBranch, dirty: changes > 0, changes },
   };
 }

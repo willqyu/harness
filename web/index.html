@@ -15,14 +15,35 @@
         margin: 0; background: var(--bg); color: var(--fg);
         font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       }
+      /* Nicer, unobtrusive scrollbars (Firefox + WebKit). */
+      * { scrollbar-width: thin; scrollbar-color: #30363d transparent; }
+      ::-webkit-scrollbar { width: 10px; height: 10px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb {
+        background: #30363d; border-radius: 8px;
+        border: 2px solid transparent; background-clip: padding-box;
+      }
+      ::-webkit-scrollbar-thumb:hover { background: #4b545f; background-clip: padding-box; }
+      ::-webkit-scrollbar-corner { background: transparent; }
       header {
         display: flex; align-items: baseline; gap: 16px;
         padding: 16px 24px; border-bottom: 1px solid var(--border);
       }
       header h1 { font-size: 16px; margin: 0; letter-spacing: 0.5px; }
       header .repo { color: var(--muted); font-size: 12px; }
+      header .navlink { color: var(--accent); text-decoration: none; font-size: 12px; }
+      header .navlink:hover { text-decoration: underline; }
       header .dot { margin-left: auto; color: var(--muted); font-size: 12px; }
-      main { padding: 24px; display: grid; gap: 24px; max-width: 1100px; }
+      main { padding: 24px; display: flex; gap: 24px; align-items: flex-start; }
+      .col-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 24px; }
+      .col-side {
+        flex: 0 0 420px; min-width: 0; position: sticky; top: 24px;
+        display: flex; flex-direction: column; gap: 24px;
+      }
+      @media (max-width: 1180px) {
+        main { flex-direction: column; }
+        .col-side { flex: 1 1 auto; width: 100%; position: static; }
+      }
       .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
       .panel h2 {
         font-size: 12px; text-transform: uppercase; letter-spacing: 1px;
@@ -31,6 +52,13 @@
       table { width: 100%; border-collapse: collapse; }
       th, td { text-align: left; padding: 8px 16px; border-bottom: 1px solid var(--border); }
       th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; }
+      /* Keep the worker/agent lists from dominating the page: cap at 70% of the
+         viewport and scroll past that, with the table header pinned. */
+      #workers, #agents { max-height: 70vh; overflow: auto; }
+      #workers thead th {
+        position: sticky; top: 0; z-index: 2;
+        background: var(--panel); box-shadow: inset 0 -1px 0 var(--border);
+      }
       tr:last-child td { border-bottom: none; }
       .empty { padding: 16px; color: var(--muted); }
       .badge {
@@ -44,6 +72,12 @@
       .sha { color: var(--accent); }
       .muted { color: var(--muted); }
       .pill-row { display: flex; flex-wrap: wrap; gap: 8px; padding: 16px; }
+      .gitgraph {
+        margin: 0; padding: 4px 8px; max-height: 440px; overflow: auto;
+        border-top: 1px solid var(--border);
+      }
+      .gitsvg { display: block; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      .gitsvg text { white-space: pre; }
       .kpi { display: flex; gap: 24px; padding: 16px; }
       .kpi div { display: flex; flex-direction: column; }
       .kpi b { font-size: 22px; }
@@ -70,9 +104,27 @@
       }
       .ev { margin: 0 0 9px; white-space: pre-wrap; word-break: break-word; }
       .ev:last-child { margin-bottom: 0; }
+      .ets {
+        font-size: 10px; color: var(--muted); opacity: 0.5;
+        margin-right: 8px; vertical-align: 1px; font-variant-numeric: tabular-nums;
+      }
+      .ets-none { opacity: 0.25; }
       .tlabel {
         font-size: 9px; text-transform: uppercase; letter-spacing: 1px;
         color: var(--muted); opacity: 0.55; margin-right: 7px; vertical-align: 1px;
+      }
+      .s-idle { background: rgba(210,153,34,.18); color: var(--run); margin-left: 6px; }
+      .s-worker { background: rgba(88,166,255,.15); color: var(--accent); }
+      .s-negotiator { background: rgba(188,140,255,.18); color: #bc8cff; }
+      .s-live { background: rgba(63,185,80,.15); color: var(--ok); margin-left: 6px; }
+      /* Branch column: roomy, single-line — long branch names never wrap. */
+      td.col-branch, th.col-branch { white-space: nowrap; min-width: 260px; }
+      /* Agents side panel: compact rows, opening prompt truncated to one line. */
+      #agents .agent-name { font-weight: 600; }
+      #agents .agent-meta { font-size: 10px; color: var(--muted); }
+      .agent-title {
+        font-size: 11px; color: var(--muted); margin-top: 3px;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 380px;
       }
       .ev-thinking { color: var(--muted); font-style: italic; }
       .ev-text { color: var(--fg); }
@@ -80,11 +132,48 @@
       .ev-user { color: var(--run); }
       .transcript .loading { color: var(--muted); padding: 6px 0; }
       .action-bar { display: flex; gap: 8px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
-      .action-bar input, .spawn textarea {
+      .action-bar input, .action-bar select, .spawn textarea {
         background: var(--bg); color: var(--fg); border: 1px solid var(--border);
         border-radius: 6px; padding: 6px 10px; font: inherit; font-size: 12px;
       }
-      .action-bar input { flex: 1; min-width: 200px; }
+      .action-bar input { flex: 1; min-width: 160px; }
+      .action-bar select { cursor: pointer; max-width: 220px; }
+      .ctrl button[data-act="extend"]:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+      .ctrl button:disabled { opacity: 0.4; cursor: default; }
+      /* Working-tree status bar atop the Workers pane. */
+      .repobar { padding: 8px 16px; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--border); }
+      .repobar.dirty { color: var(--run); background: rgba(210,153,34,.08); }
+      .repobar button {
+        background: var(--bg); color: var(--run); border: 1px solid var(--run);
+        border-radius: 6px; padding: 2px 10px; margin: 0 2px; font: inherit; font-size: 11px; cursor: pointer;
+      }
+      .repobar button:hover { background: rgba(210,153,34,.15); }
+      .s-current { background: rgba(63,185,80,.15); color: var(--ok); margin-left: 6px; }
+      /* Extend modal */
+      .modal-overlay {
+        position: fixed; inset: 0; background: rgba(1,4,9,.7);
+        display: flex; align-items: center; justify-content: center; z-index: 50;
+      }
+      .modal-overlay[hidden] { display: none; }
+      .modal {
+        background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+        width: min(560px, 92vw); padding: 18px 20px; box-shadow: 0 16px 48px rgba(1,4,9,.6);
+      }
+      .modal h3 { margin: 0 0 4px; font-size: 14px; }
+      .modal .hint { color: var(--muted); font-size: 11px; margin: 0 0 12px; }
+      .modal textarea {
+        width: 100%; background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+        border-radius: 6px; padding: 8px 10px; font: inherit; font-size: 13px; resize: vertical; line-height: 1.5;
+      }
+      .modal-actions { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+      .modal-actions .spacer { margin-left: auto; }
+      .modal-actions button {
+        background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+        border-radius: 6px; padding: 6px 16px; font: inherit; font-size: 12px; cursor: pointer;
+      }
+      .modal-actions button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+      #modal-submit { border-color: var(--accent); color: var(--accent); }
+      .modal-actions button:disabled { opacity: 0.5; cursor: default; }
       .action-bar button {
         background: var(--bg); color: var(--fg); border: 1px solid var(--border);
         border-radius: 6px; padding: 6px 14px; font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap;
@@ -105,36 +194,35 @@
   <body>
     <header>
       <h1>⛓ harness</h1>
+      <a class="navlink" href="/branches">branch log →</a>
       <span class="repo" id="repo">—</span>
       <span class="dot" id="updated">connecting…</span>
     </header>
     <main>
+      <div class="col-main">
       <section class="panel">
-        <h2>Integration → main</h2>
-        <div id="integrate-rec"></div>
-        <div class="action-bar">
-          <input id="integrate-test" type="text" placeholder="test gate (optional), e.g. cd frontend && npx tsc -b" />
-          <button id="integrate-btn">Integrate completed branches</button>
-          <span id="integrate-msg" class="muted"></span>
+        <h2>Spawn worker</h2>
+        <div class="spawn">
+          <textarea id="spawn-desc" rows="3" placeholder="Describe the task — the supervisor decides if it needs one worker or a fleet of branches…"></textarea>
+          <div class="action-bar">
+            <select id="spawn-mode" title="How to plan this task">
+              <option value="auto">Auto · supervisor decides</option>
+              <option value="single">Single worker</option>
+              <option value="split">Split into a fleet</option>
+            </select>
+            <select id="spawn-continue" title="Continue a previous task (seeds its full context)">
+              <option value="">— new task —</option>
+            </select>
+            <input id="spawn-branch" type="text" placeholder="branch name (optional)" />
+            <button id="spawn-btn">Spawn</button>
+            <span id="spawn-msg" class="muted"></span>
+          </div>
         </div>
-        <div id="integration"><div class="empty">No integration run yet.</div></div>
       </section>
 
       <section class="panel">
         <h2>Workers</h2>
         <div id="workers"><div class="empty">No workers yet.</div></div>
-      </section>
-
-      <section class="panel">
-        <h2>Spawn worker</h2>
-        <div class="spawn">
-          <textarea id="spawn-desc" rows="3" placeholder="Describe the task for a new agent — it gets its own branch + worktree and starts immediately…"></textarea>
-          <div class="action-bar">
-            <input id="spawn-branch" type="text" placeholder="branch name (optional — auto if blank)" />
-            <button id="spawn-btn">Spawn worker</button>
-            <span id="spawn-msg" class="muted"></span>
-          </div>
-        </div>
       </section>
 
       <section class="panel">
@@ -146,7 +234,40 @@
         <h2>Checkpoints</h2>
         <div id="checkpoints"><div class="empty">—</div></div>
       </section>
+      </div>
+
+      <aside class="col-side">
+        <section class="panel">
+          <h2>Integration → main</h2>
+          <div id="integrate-rec"></div>
+          <div class="action-bar">
+            <input id="integrate-test" type="text" placeholder="test gate (optional), e.g. cd frontend && npx tsc -b" />
+            <button id="integrate-btn">Integrate completed branches</button>
+            <span id="integrate-msg" class="muted"></span>
+          </div>
+          <div id="integration"><div class="empty">No integration run yet.</div></div>
+        </section>
+
+        <section class="panel">
+          <h2>Agents · live transcripts</h2>
+          <div id="agents"><div class="empty">No agents yet.</div></div>
+        </section>
+      </aside>
     </main>
+
+    <div id="modal-overlay" class="modal-overlay" hidden>
+      <div class="modal">
+        <h3 id="modal-title">Extend task</h3>
+        <p class="hint" id="modal-hint"></p>
+        <textarea id="modal-text" rows="4" placeholder="New instruction to add to this task…"></textarea>
+        <div class="modal-actions">
+          <span id="modal-msg" class="muted"></span>
+          <span class="spacer"></span>
+          <button id="modal-cancel">Cancel</button>
+          <button id="modal-submit">Extend</button>
+        </div>
+      </div>
+    </div>
 
     <script>
       const $ = (id) => document.getElementById(id);
@@ -154,15 +275,54 @@
       const short = (sha) => (sha ? esc(String(sha).slice(0, 8)) : "—");
       const badge = (s) => `<span class="badge s-${esc(s)}">${esc(s)}</span>`;
 
-      function controlsCell(w, inbox) {
-        if (w.state !== "running") return '<span class="muted">—</span>';
-        const paused = inbox && inbox[w.branch] && inbox[w.branch].paused;
+      // Local HH:MM:SS for a transcript line's ISO timestamp.
+      const fmtTime = (iso) => {
+        const d = new Date(iso);
+        return isNaN(d) ? "--:--:--" : d.toTimeString().slice(0, 8);
+      };
+      const fmtDur = (secs) => (secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m`);
+
+      // Flag a running agent that has gone quiet (no transcript activity).
+      const IDLE_THRESHOLD_S = 90;
+      function idleBadge(w) {
+        if (w.state !== "running" || !w.lastActivityAt) return "";
+        const secs = Math.floor((Date.now() - new Date(w.lastActivityAt).getTime()) / 1000);
+        if (!(secs >= IDLE_THRESHOLD_S)) return "";
+        return ` <span class="badge s-idle" title="no agent activity since ${esc(w.lastActivityAt)}">⚠ idle ${fmtDur(secs)}</span>`;
+      }
+
+      function controlsCell(w, inbox, repo) {
         const b = esc(w.branch);
+        // Extend steers a running worker or continues a finished one in place.
+        // Once the branch is in main there's nothing to extend — grey it out.
+        const extend = w.merged
+          ? `<button data-act="extend" disabled title="already integrated into main">Extend</button>`
+          : `<button data-act="extend" title="extend this task before it's integrated">Extend</button>`;
+        // Switch the primary working tree to this branch — only from a clean tree,
+        // and not while the branch is busy in its own worker worktree.
+        let checkout;
+        if (repo && repo.branch === w.branch) checkout = `<button disabled title="working tree is already on this branch">✓ on tree</button>`;
+        else if (w.state === "running") checkout = `<button disabled title="branch is checked out in its worker worktree">Checkout</button>`;
+        else if (repo && repo.dirty) checkout = `<button disabled title="stash or commit changes first">Checkout</button>`;
+        else checkout = `<button data-act="checkout" title="switch the working tree to this branch">Checkout</button>`;
+        if (w.state !== "running") {
+          return `<div class="ctrl" data-branch="${b}">${extend}${checkout}</div>`;
+        }
+        const paused = inbox && inbox[w.branch] && inbox[w.branch].paused;
         return `<div class="ctrl" data-branch="${b}">
             <input type="text" placeholder="message this agent…" data-role="inject-text" />
             <button data-act="inject">Send</button>
             <button data-act="${paused ? "resume" : "pause"}" class="${paused ? "paused" : ""}">${paused ? "Resume" : "Pause"}</button>
+            ${extend}${checkout}
           </div>`;
+      }
+
+      function renderRepoBar(repo) {
+        if (!repo) return "";
+        if (repo.dirty) {
+          return `<div class="repobar dirty">⚠ working tree on <span class="sha">${esc(repo.branch)}</span> has <b>${repo.changes}</b> uncommitted change${repo.changes !== 1 ? "s" : ""} — checkout disabled until you <button data-act="stash">Stash all</button> or commit them.</div>`;
+        }
+        return `<div class="repobar">working tree on <span class="sha">${esc(repo.branch)}</span> · clean</div>`;
       }
 
       // Expanded transcript panels (per branch) + their accumulated state.
@@ -170,29 +330,35 @@
       const logs = new Map(); // branch -> { offset, html }
 
       function renderEvent(e) {
-        return `<div class="ev ev-${esc(e.kind)}"><span class="tlabel">${esc(e.kind)}</span>${esc(e.text)}</div>`;
+        const ts = e.ts
+          ? `<span class="ets">${fmtTime(e.ts)}</span>`
+          : `<span class="ets ets-none">--:--:--</span>`;
+        return `<div class="ev ev-${esc(e.kind)}">${ts}<span class="tlabel">${esc(e.kind)}</span>${esc(e.text)}</div>`;
       }
 
-      function renderWorkers(workers, inbox) {
-        if (!workers.length) return '<div class="empty">No workers yet.</div>';
-        const rows = workers.map((w) => {
+      function renderWorkers(workers, inbox, repo) {
+        const bar = renderRepoBar(repo);
+        if (!workers.length) return bar + '<div class="empty">No workers yet.</div>';
+        // Newest-spawned first (registry is in spawn order).
+        const rows = workers.slice().reverse().map((w) => {
           const b = esc(w.branch);
           const open = expanded.has(w.branch);
           const paused = inbox && inbox[w.branch] && inbox[w.branch].paused;
+          const current = repo && repo.branch === w.branch ? ` <span class="badge s-current" title="the working tree is on this branch">● on tree</span>` : "";
           const summary = `
             <tr>
-              <td><span class="exp" data-act="toggle" data-branch="${b}"><span class="caret">${open ? "▾" : "▸"}</span>${esc(w.branch)}</span>${paused ? " " + badge("paused") : ""}</td>
+              <td class="col-branch"><span class="exp" data-act="toggle" data-branch="${b}"><span class="caret">${open ? "▾" : "▸"}</span>${esc(w.branch)}</span>${paused ? " " + badge("paused") : ""}${current}</td>
               <td class="muted">${esc(w.taskId)}</td>
-              <td>${badge(w.state)}</td>
+              <td>${badge(w.state)}${idleBadge(w)}${w.priority ? ` <span class="badge s-pending" title="integration priority (1=highest)">p${esc(w.priority)}</span>` : ""}</td>
               <td class="sha">${short(w.head)}</td>
               <td class="muted">${w.checkpoint ? "✓" : "—"}</td>
-              <td>${controlsCell(w, inbox)}</td>
+              <td>${controlsCell(w, inbox, repo)}</td>
             </tr>`;
           if (!open) return summary;
           const html = (logs.get(w.branch) || {}).html || '<div class="loading">loading transcript…</div>';
           return summary + `<tr class="detail"><td colspan="6"><div class="transcript" data-branch="${b}">${html}</div></td></tr>`;
         }).join("");
-        return `<table><thead><tr><th>Branch</th><th>Task</th><th>State</th><th>Head</th><th>Ckpt</th><th>Steer</th></tr></thead><tbody>${rows}</tbody></table>`;
+        return bar + `<table><thead><tr><th class="col-branch">Branch</th><th>Task</th><th>State</th><th>Head</th><th>Ckpt</th><th>Steer</th></tr></thead><tbody>${rows}</tbody></table>`;
       }
 
       async function pollLog(branch) {
@@ -219,6 +385,79 @@
         if (expanded.has(branch)) setTimeout(() => pollLog(branch), 1500);
       }
 
+      // ---- Agents panel: every Claude session (workers + negotiators) ----
+      const agentExpanded = new Set();
+      const agentLogs = new Map(); // id -> { offset, html }
+
+      function agentActivity(a) {
+        const secs = Math.floor((Date.now() - new Date(a.lastActivityAt).getTime()) / 1000);
+        if (secs < 20) return ` <span class="badge s-live">● live</span>`;
+        return ` <span class="agent-meta">${fmtDur(secs)} ago</span>`;
+      }
+
+      function renderAgents(agents) {
+        if (!agents.length) return '<div class="empty">No agents yet.</div>';
+        const rows = agents.map((a) => {
+          const id = esc(a.id);
+          const open = agentExpanded.has(a.id);
+          const name = esc(a.branch || "(unknown branch)");
+          const summary = `
+            <tr>
+              <td>
+                <span class="exp agent-name" data-act="toggle-agent" data-agent="${id}"><span class="caret">${open ? "▾" : "▸"}</span>${name}</span>
+                ${badge(a.role)}${agentActivity(a)}
+                <div class="agent-title" title="${esc(a.title)}">${esc(a.title) || "—"}</div>
+              </td>
+            </tr>`;
+          if (!open) return summary;
+          const html = (agentLogs.get(a.id) || {}).html || '<div class="loading">loading transcript…</div>';
+          return summary + `<tr class="detail"><td><div class="transcript" data-agent="${id}">${html}</div></td></tr>`;
+        }).join("");
+        return `<table><tbody>${rows}</tbody></table>`;
+      }
+
+      async function pollAgentLog(id) {
+        if (!agentExpanded.has(id)) return;
+        const st = agentLogs.get(id) || { offset: 0, html: "" };
+        try {
+          const r = await fetch(`/api/agentlog?id=${encodeURIComponent(id)}&offset=${st.offset}`);
+          const c = await r.json();
+          if (typeof c.offset === "number") st.offset = c.offset;
+          if (c.events && c.events.length) {
+            if (st.html.indexOf("loading transcript") >= 0) st.html = "";
+            st.html += c.events.map(renderEvent).join("");
+          } else if (!st.html) {
+            st.html = '<div class="loading">no transcript yet for this agent.</div>';
+          }
+          agentLogs.set(id, st);
+          const panel = document.querySelector(`.transcript[data-agent="${CSS.escape(id)}"]`);
+          if (panel) {
+            const atBottom = panel.scrollHeight - panel.scrollTop - panel.clientHeight < 48;
+            panel.innerHTML = st.html;
+            if (atBottom) panel.scrollTop = panel.scrollHeight;
+          }
+        } catch (e) { /* transient */ }
+        if (agentExpanded.has(id)) setTimeout(() => pollAgentLog(id), 1500);
+      }
+
+      async function tickAgents() {
+        try {
+          const r = await fetch("/api/agents");
+          const { agents } = await r.json();
+          const scrolls = {};
+          document.querySelectorAll(".transcript[data-agent]").forEach((p) => {
+            scrolls[p.dataset.agent] = { top: p.scrollTop, atBottom: p.scrollHeight - p.scrollTop - p.clientHeight < 48 };
+          });
+          const agentsScroll = $("agents").scrollTop;
+          $("agents").innerHTML = renderAgents(agents || []);
+          $("agents").scrollTop = agentsScroll;
+          document.querySelectorAll(".transcript[data-agent]").forEach((p) => {
+            const sv = scrolls[p.dataset.agent];
+            if (sv) p.scrollTop = sv.atBottom ? p.scrollHeight : sv.top;
+          });
+        } catch (e) { /* shown as disconnected by the status tick */ }
+      }
+
       async function postJSON(path, body) {
         try {
           await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -240,20 +479,103 @@
         tick();
       });
 
+      // Expand/collapse an agent row (workers + negotiators) to stream its transcript.
+      document.addEventListener("click", (ev) => {
+        const tog = ev.target.closest('[data-act="toggle-agent"]');
+        if (!tog) return;
+        const id = tog.dataset.agent;
+        if (agentExpanded.has(id)) {
+          agentExpanded.delete(id);
+        } else {
+          agentExpanded.add(id);
+          if (!agentLogs.has(id)) agentLogs.set(id, { offset: 0, html: "" });
+          pollAgentLog(id);
+        }
+        tickAgents();
+      });
+
       // Event delegation for the per-agent steer controls.
       document.addEventListener("click", (ev) => {
         const btn = ev.target.closest("button[data-act]");
         if (!btn) return;
         const wrap = btn.closest(".ctrl");
+        if (!wrap) return; // handled by a dedicated listener (e.g. the repo-bar stash button)
         const branch = wrap.dataset.branch;
         const act = btn.dataset.act;
         if (act === "inject") {
           const input = wrap.querySelector('[data-role="inject-text"]');
           const text = input.value.trim();
           if (text) { postJSON("/api/inject", { branch, text }); input.value = ""; }
+        } else if (act === "extend") {
+          openExtendModal(branch, btn.closest("tr"));
+        } else if (act === "checkout") {
+          doCheckout(branch);
         } else {
           postJSON("/api/control", { branch, action: act });
         }
+      });
+
+      // Switch the primary working tree to a worker's branch (clean tree only).
+      async function doCheckout(branch) {
+        try {
+          await api("/api/checkout", { branch });
+          $("spawn-msg").textContent = `✓ working tree now on ${branch}`;
+          setTimeout(tick, 300);
+        } catch (e) {
+          $("spawn-msg").textContent = "✗ checkout: " + e.message;
+        }
+      }
+
+      // Stash the working tree from the repo-bar so a checkout can proceed.
+      document.addEventListener("click", async (ev) => {
+        if (!ev.target.closest('[data-act="stash"]')) return;
+        try {
+          const j = await api("/api/stash", {});
+          $("spawn-msg").textContent = "✓ " + (j.detail || "stashed working tree");
+          setTimeout(tick, 300);
+        } catch (e) {
+          $("spawn-msg").textContent = "✗ stash: " + e.message;
+        }
+      });
+
+      // Extend modal: steers a running worker in place, or continues a finished
+      // (un-integrated) branch on the SAME branch. The backend chooses which.
+      let extendBranch = null;
+      function openExtendModal(branch, row) {
+        extendBranch = branch;
+        const running = row && /s-running/.test(row.innerHTML);
+        $("modal-title").textContent = `Extend "${branch}"`;
+        $("modal-hint").textContent = running
+          ? "This worker is running — your message is delivered to it live."
+          : "This branch is finished but not yet integrated — a worker continues it in place, stacking new commits on the same branch.";
+        $("modal-text").value = "";
+        $("modal-msg").textContent = "";
+        $("modal-submit").disabled = false;
+        $("modal-overlay").hidden = false;
+        $("modal-text").focus();
+      }
+      function closeExtendModal() { $("modal-overlay").hidden = true; extendBranch = null; }
+      async function submitExtend() {
+        const text = $("modal-text").value.trim();
+        if (!text) { $("modal-msg").textContent = "enter an instruction"; return; }
+        const branch = extendBranch;
+        $("modal-submit").disabled = true; $("modal-msg").textContent = "sending…";
+        try {
+          const j = await api("/api/extend", { branch, text });
+          closeExtendModal();
+          $("spawn-msg").textContent = j.mode === "injected" ? `✓ steered ${branch}` : `✓ continuing ${branch}`;
+          setTimeout(tick, 800);
+        } catch (e) {
+          $("modal-msg").textContent = "✗ " + e.message;
+          $("modal-submit").disabled = false;
+        }
+      }
+      $("modal-cancel").addEventListener("click", closeExtendModal);
+      $("modal-submit").addEventListener("click", submitExtend);
+      $("modal-overlay").addEventListener("click", (e) => { if (e.target.id === "modal-overlay") closeExtendModal(); });
+      $("modal-text").addEventListener("keydown", (e) => {
+        if (e.key === "Escape") closeExtendModal();
+        else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submitExtend();
       });
       document.addEventListener("keydown", (ev) => {
         if (ev.key !== "Enter") return;
@@ -290,13 +612,19 @@
       $("spawn-btn").addEventListener("click", async () => {
         const desc = $("spawn-desc").value.trim();
         const branch = $("spawn-branch").value.trim();
+        const mode = $("spawn-mode").value;
+        const continueFrom = $("spawn-continue").value;
         if (!desc) { $("spawn-msg").textContent = "describe a task first"; return; }
         const btn = $("spawn-btn");
-        btn.disabled = true; $("spawn-msg").textContent = "spawning…";
+        btn.disabled = true;
+        $("spawn-msg").textContent = continueFrom ? "continuing…" : (mode === "single" ? "spawning…" : "supervisor planning…");
         try {
-          const j = await api("/api/spawn", { description: desc, branch });
-          $("spawn-msg").textContent = "✓ spawned " + j.branch;
+          await api("/api/spawn", { description: desc, branch, mode, continueFrom });
+          $("spawn-msg").textContent = continueFrom
+            ? "✓ continuation of " + continueFrom + " started"
+            : (mode === "single" ? "✓ worker spawned" : "✓ supervisor planning the fleet…");
           $("spawn-desc").value = ""; $("spawn-branch").value = "";
+          $("spawn-continue").value = "";
         } catch (e) {
           $("spawn-msg").textContent = "✗ " + e.message;
         } finally {
@@ -304,6 +632,25 @@
           setTimeout(tick, 800);
         }
       });
+
+      // Populate the "Continue from" picker from every branch the harness knows
+      // (registry + checkpoints), preserving the user's current selection.
+      function populateContinue(s) {
+        const sel = $("spawn-continue");
+        if (!sel) return;
+        const branches = new Set();
+        (s.workers || []).forEach((w) => branches.add(w.branch));
+        (s.checkpoints || []).forEach((c) => branches.add(c.branch));
+        const html = ['<option value="">— new task —</option>']
+          .concat([...branches].sort().map((b) => `<option value="${esc(b)}">${esc(b)}</option>`))
+          .join("");
+        if (sel.dataset.sig !== html) {
+          const cur = sel.value;
+          sel.innerHTML = html;
+          sel.dataset.sig = html;
+          sel.value = cur; // keep the user's choice across refreshes
+        }
+      }
 
       // Recommend integration once every worker is terminal and there are
       // completed branches not yet folded into main.
@@ -335,17 +682,23 @@
 
       function renderIntegration(it) {
         if (!it) return '<div class="empty">No integration run yet.</div>';
-        const steps = (it.steps || []).map((s) => `
+        const allSteps = it.steps || [];
+        const shown = allSteps.slice(-5); // only the last 5 branches merged
+        const hidden = allSteps.length - shown.length;
+        const more = hidden > 0
+          ? `<tr><td colspan="3" class="muted" style="font-size:11px">… ${hidden} earlier branch${hidden !== 1 ? "es" : ""} hidden — showing last 5</td></tr>`
+          : "";
+        const steps = shown.map((s) => `
           <tr><td>${esc(s.branch)}</td><td>${badge(s.status)}</td><td class="muted">${esc(s.detail || "")}</td></tr>`).join("");
         const kpi = `
           <div class="kpi">
             <div><b>${badge(String(it.promoted))}</b><span>promoted</span></div>
             <div><b class="sha">${short(it.mainHead)}</b><span>main head</span></div>
-            <div><b>${(it.steps || []).length}</b><span>branches</span></div>
+            <div><b>${allSteps.length}</b><span>branches</span></div>
             <div><b class="muted" style="font-size:12px">${esc((it.updatedAt || "").replace("T", " ").slice(0, 19))}</b><span>updated</span></div>
           </div>`;
         const table = steps
-          ? `<table><thead><tr><th>Branch</th><th>Result</th><th>Detail</th></tr></thead><tbody>${steps}</tbody></table>`
+          ? `<table><thead><tr><th>Branch</th><th>Result</th><th>Detail</th></tr></thead><tbody>${more}${steps}</tbody></table>`
           : "";
         const warn = it.warning
           ? `<div class="rec" style="background:rgba(248,81,73,.12);border-color:rgba(248,81,73,.5);color:var(--fail)">⚠ ${esc(it.warning)}</div>`
@@ -353,11 +706,89 @@
         return kpi + warn + table;
       }
 
-      function renderWorktrees(wts) {
-        if (!wts.length) return '<div class="empty">—</div>';
-        return `<div class="pill-row">${wts
-          .map((w) => `<span class="badge s-pending">${esc(w.branch || "(detached)")}</span>`)
-          .join("")}</div>`;
+      const GRAPH_COLORS = ["#58a6ff","#3fb950","#d29922","#bc8cff","#f85149","#39c5cf","#db61a2","#e3b341"];
+
+      // Lay commits into lanes (one column per concurrent line of history) and
+      // render the graph as an SVG: nodes = circles, edges = vector curves to
+      // each parent. `commits` is newest-first with {hash, parents, refs, subject}.
+      function renderGitGraphSVG(commits) {
+        if (!commits || !commits.length) return "";
+        const ROW = 22, LANE = 16, R = 4, PADX = 12, PADY = 14;
+        const lc = (l) => GRAPH_COLORS[((l % GRAPH_COLORS.length) + GRAPH_COLORS.length) % GRAPH_COLORS.length];
+        const gx = (l) => PADX + l * LANE;
+        const gy = (r) => PADY + r * ROW;
+
+        const pos = {};            // hash -> {row, lane}
+        const lanes = [];          // lane -> hash it currently expects, or null if free
+        const placed = [];         // {hash, lane, parents}
+        let maxLane = 0;
+        commits.forEach((c, i) => {
+          let col = lanes.indexOf(c.hash);
+          if (col < 0) { col = lanes.indexOf(null); if (col < 0) { col = lanes.length; lanes.push(null); } }
+          for (let k = 0; k < lanes.length; k++) if (lanes[k] === c.hash && k !== col) lanes[k] = null;
+          pos[c.hash] = { row: i, lane: col };
+          placed.push({ hash: c.hash, lane: col, parents: c.parents });
+          if (!c.parents.length) { lanes[col] = null; }
+          else {
+            lanes[col] = c.parents[0];
+            for (let p = 1; p < c.parents.length; p++) {
+              const par = c.parents[p];
+              if (lanes.indexOf(par) < 0) {
+                let f = lanes.indexOf(null); if (f < 0) { f = lanes.length; lanes.push(null); }
+                lanes[f] = par;
+              }
+            }
+          }
+          maxLane = Math.max(maxLane, lanes.length - 1, col);
+        });
+
+        let edges = "", nodes = "", texts = "";
+        for (const p of placed) {
+          const x1 = gx(p.lane), y1 = gy(pos[p.hash].row);
+          for (const par of p.parents) {
+            const pp = pos[par];
+            if (pp) {
+              const x2 = gx(pp.lane), y2 = gy(pp.row);
+              if (x1 === x2) {
+                edges += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${lc(p.lane)}" stroke-width="1.5"/>`;
+              } else {
+                edges += `<path d="M${x1},${y1} C${x1},${y1 + ROW * 0.6} ${x2},${y2 - ROW * 0.6} ${x2},${y2}" fill="none" stroke="${lc(pp.lane)}" stroke-width="1.5"/>`;
+              }
+            } else {
+              // parent beyond the loaded window — short dashed stub
+              edges += `<line x1="${x1}" y1="${y1}" x2="${x1}" y2="${y1 + ROW}" stroke="${lc(p.lane)}" stroke-width="1.5" stroke-dasharray="2 2"/>`;
+            }
+          }
+        }
+        const textX = gx(maxLane) + LANE + 6;
+        let maxText = 0;
+        for (const p of placed) {
+          const c = commits[pos[p.hash].row];
+          const x = gx(p.lane), y = gy(pos[p.hash].row);
+          nodes += `<circle cx="${x}" cy="${y}" r="${R}" fill="${lc(p.lane)}" stroke="var(--bg)" stroke-width="1.5"/>`;
+          let t = `<tspan fill="var(--accent)">${esc(c.hash.slice(0, 7))}</tspan>`;
+          if (c.refs) t += ` <tspan fill="var(--ok)" font-weight="600">(${esc(c.refs)})</tspan>`;
+          t += ` <tspan fill="var(--fg)">${esc(c.subject)}</tspan>`;
+          texts += `<text x="${textX}" y="${y + 4}" font-size="12">${t}</text>`;
+          maxText = Math.max(maxText, 8 + c.hash.slice(0, 7).length + (c.refs ? c.refs.length + 3 : 0) + c.subject.length);
+        }
+        // Size the SVG to its content (≈7px/char) so long subjects aren't clipped;
+        // the container scrolls horizontally past that.
+        const w = Math.ceil(textX + maxText * 7);
+        const h = gy(commits.length - 1) + PADY;
+        return `<svg class="gitsvg" width="${w}" height="${h}">${edges}${nodes}${texts}</svg>`;
+      }
+
+      function renderWorktrees(wts, commits) {
+        const pills = wts.length
+          ? `<div class="pill-row">${wts
+              .map((w) => `<span class="badge s-pending">${esc(w.branch || "(detached)")}</span>`)
+              .join("")}</div>`
+          : '<div class="empty">No active worktrees.</div>';
+        const tree = commits && commits.length
+          ? `<div class="gitgraph">${renderGitGraphSVG(commits)}</div>`
+          : "";
+        return pills + tree;
       }
 
       function renderCheckpoints(cps) {
@@ -375,6 +806,7 @@
           $("updated").textContent = "updated " + new Date(s.generatedAt).toLocaleTimeString();
           $("integration").innerHTML = renderIntegration(s.integration);
           renderRecommend(s);
+          populateContinue(s);
 
           // Preserve a half-typed message across the refresh.
           const focused = document.activeElement;
@@ -386,7 +818,9 @@
           document.querySelectorAll(".transcript[data-branch]").forEach((p) => {
             scrolls[p.dataset.branch] = { top: p.scrollTop, atBottom: p.scrollHeight - p.scrollTop - p.clientHeight < 48 };
           });
-          $("workers").innerHTML = renderWorkers(s.workers || [], s.inbox || {});
+          const workersScroll = $("workers").scrollTop;
+          $("workers").innerHTML = renderWorkers(s.workers || [], s.inbox || {}, s.repo);
+          $("workers").scrollTop = workersScroll;
           document.querySelectorAll(".transcript[data-branch]").forEach((p) => {
             const sv = scrolls[p.dataset.branch];
             if (sv) p.scrollTop = sv.atBottom ? p.scrollHeight : sv.top;
@@ -395,7 +829,14 @@
             const sel = document.querySelector(`.ctrl[data-branch="${CSS.escape(typing.branch)}"] [data-role="inject-text"]`);
             if (sel) { sel.value = typing.value; sel.focus(); try { sel.setSelectionRange(typing.start, typing.start); } catch (e) {} }
           }
-          $("worktrees").innerHTML = renderWorktrees(s.worktrees || []);
+          // Render the commit graph for active worktrees, preserving scroll.
+          let commits = [];
+          try { commits = (await (await fetch("/api/gitgraph")).json()).commits || []; } catch (e) { /* transient */ }
+          const gg = document.querySelector("#worktrees .gitgraph");
+          const ggScroll = gg ? { top: gg.scrollTop, left: gg.scrollLeft } : null;
+          $("worktrees").innerHTML = renderWorktrees(s.worktrees || [], commits);
+          const gg2 = document.querySelector("#worktrees .gitgraph");
+          if (gg2 && ggScroll) { gg2.scrollTop = ggScroll.top; gg2.scrollLeft = ggScroll.left; }
           $("checkpoints").innerHTML = renderCheckpoints(s.checkpoints || []);
         } catch (e) {
           $("updated").textContent = "disconnected";
@@ -403,6 +844,8 @@
       }
       tick();
       setInterval(tick, 2000);
+      tickAgents();
+      setInterval(tickAgents, 2000);
     </script>
   </body>
 </html>

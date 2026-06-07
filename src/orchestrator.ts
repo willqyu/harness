@@ -83,8 +83,10 @@ export class Orchestrator {
       this.opts.events?.emitEvent({ type: "task:start", taskId: id, branch: node.branch });
       try {
         await inboxes.clear(node.branch); // drop stale messages from a prior run
-        worktree = await wtm.add(node.branch, baseRef);
-        await registry.upsert({ taskId: id, branch: node.branch, worktree, state: "running" });
+        worktree = node.attachBranch
+          ? await wtm.addExisting(node.branch) // continue the existing branch in place
+          : await wtm.add(node.branch, baseRef);
+        await registry.upsert({ taskId: id, branch: node.branch, worktree, state: "running", priority: node.priority });
         const ctx: WorkerContext = {
           taskId: id,
           branch: node.branch,
@@ -112,6 +114,7 @@ export class Orchestrator {
           state: "completed",
           head,
           checkpoint,
+          priority: node.priority,
         });
         this.opts.events?.emitEvent({ type: "task:done", taskId: id, branch: node.branch, head });
         this.log(`✔ ${id} -> ${node.branch} @ ${head.slice(0, 8)}`);
@@ -119,7 +122,7 @@ export class Orchestrator {
         const msg = err instanceof Error ? err.message : String(err);
         dag.setState(id, "failed");
         outcomes.set(id, { taskId: id, branch: node.branch, state: "failed", error: msg });
-        await registry.upsert({ taskId: id, branch: node.branch, worktree, state: "failed", error: msg });
+        await registry.upsert({ taskId: id, branch: node.branch, worktree, state: "failed", error: msg, priority: node.priority });
         this.opts.events?.emitEvent({ type: "task:fail", taskId: id, branch: node.branch, error: msg });
         this.log(`✘ ${id} (${node.branch}): ${msg}`);
       } finally {

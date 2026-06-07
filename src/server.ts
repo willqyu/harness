@@ -6,8 +6,11 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readFleetStatus } from "./status.js";
-import { readAgentLog } from "./transcript.js";
+import { readAgentLog, listAgentSessions, readSessionLog } from "./transcript.js";
+import { readBranchLog } from "./branches.js";
 import { InboxManager, type InboxKind } from "./inbox.js";
+import { Registry } from "./registry.js";
+import { Git } from "./git.js";
 
 export interface ServerOptions {
   repoRoot: string;
@@ -45,16 +48,6 @@ function spawnHarness(
   closeSync(fd);
   if (detached) child.unref();
   return child;
-}
-
-function slugBranch(desc: string): string {
-  const slug = String(desc)
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 32) || "task";
-  const suffix = Date.now().toString(36).slice(-4);
-  return `agent/${slug}-${suffix}`;
 }
 
 function sanitizeBranch(b: unknown): string {
@@ -109,7 +102,7 @@ export function startServer(opts: ServerOptions): http.Server {
         }
         const body = await readBody(req);
         const { test, maxRounds } = JSON.parse(body || "{}");
-        const args = ["integrate", "--repo", opts.repoRoot, "--dangerous"];
+        const args = ["integrate", "--repo", opts.repoRoot, "--dangerous", "--prioritized"];
         if (test && String(test).trim()) args.push("--test", String(test).trim());
         if (maxRounds) args.push("--max-rounds", String(parseInt(String(maxRounds), 10) || 3));
         integrating = true;
@@ -122,27 +115,81 @@ export function startServer(opts: ServerOptions): http.Server {
 
       if (req.method === "POST" && url.pathname === "/api/spawn") {
         const body = await readBody(req);
-        const { description, branch } = JSON.parse(body || "{}");
+        const { description, branch, mode, continueFrom } = JSON.parse(body || "{}");
         if (!description || !String(description).trim()) {
           return send(res, 400, "application/json", '{"error":"description required"}');
         }
-        const wanted = sanitizeBranch(branch);
-        const finalBranch = wanted || slugBranch(description);
-        const task = {
-          id: finalBranch.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "task",
-          branch: finalBranch,
+        // Hand off to `harness plan`: the supervisor decides single-vs-fleet and,
+        // when continuing, seeds the prior branch's context + forks from its head.
+        const request = {
           description: String(description),
+          branch: sanitizeBranch(branch) || undefined,
+          mode: ["single", "auto", "split"].includes(mode) ? mode : "auto",
+          continueFrom: continueFrom ? sanitizeBranch(continueFrom) : undefined,
         };
-        const tasksFile = path.join(os.tmpdir(), `harness-spawn-${Date.now().toString(36)}.json`);
-        await writeFile(tasksFile, JSON.stringify({ concurrency: 1, tasks: [task] }, null, 2));
-        spawnHarness(
-          opts.repoRoot,
-          ["run", tasksFile, "--repo", opts.repoRoot, "--concurrency", "1", "--dangerous"],
-          "spawn.log",
-          true,
-        );
-        log(`spawned worker on ${finalBranch}`);
-        return send(res, 200, "application/json", JSON.stringify({ ok: true, branch: finalBranch }));
+        const reqFile = path.join(os.tmpdir(), `harness-plan-${Date.now().toString(36)}.json`);
+        await writeFile(reqFile, JSON.stringify(request, null, 2));
+        spawnHarness(opts.repoRoot, ["plan", reqFile, "--repo", opts.repoRoot, "--dangerous"], "spawn.log", true);
+        log(`plan spawned (mode=${request.mode}${request.continueFrom ? `, continue ${request.continueFrom}` : ""})`);
+        return send(res, 200, "application/json", JSON.stringify({ ok: true, planning: true }));
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/extend") {
+        const body = await readBody(req);
+        const { branch, text } = JSON.parse(body || "{}");
+        const b = sanitizeBranch(branch);
+        if (!b || !text || !String(text).trim()) {
+          return send(res, 400, "application/json", '{"error":"branch and text required"}');
+        }
+        const reg = await Registry.open(path.join(opts.repoRoot, ".harness", "registry.json"));
+        const entry = reg.all().find((e) => e.branch === b);
+        // Too late to extend once the branch has landed in main.
+        const git = new Git(opts.repoRoot);
+        const mainRef = (await git.tryRun(["rev-parse", "--verify", "--quiet", "main"])).code === 0 ? "main" : "HEAD";
+        if (entry?.head && (await git.tryRun(["merge-base", "--is-ancestor", entry.head, mainRef])).code === 0) {
+          return send(res, 409, "application/json", '{"error":"branch already integrated into main — spawn a new task instead"}');
+        }
+        if (entry?.state === "running") {
+          // Live worker: steer it in place.
+          await inbox.post(b, { kind: "inject", text: String(text), from: "dashboard" });
+          log(`extend → ${b}: injected to running worker`);
+          return send(res, 200, "application/json", JSON.stringify({ ok: true, mode: "injected" }));
+        }
+        // Terminal but un-integrated: continue it with a seeded follow-up worker.
+        const request = { description: String(text), continueFrom: b, mode: "single" };
+        const reqFile = path.join(os.tmpdir(), `harness-plan-${Date.now().toString(36)}.json`);
+        await writeFile(reqFile, JSON.stringify(request, null, 2));
+        spawnHarness(opts.repoRoot, ["plan", reqFile, "--repo", opts.repoRoot, "--dangerous"], "spawn.log", true);
+        log(`extend → ${b}: spawned continuation`);
+        return send(res, 200, "application/json", JSON.stringify({ ok: true, mode: "continued" }));
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/checkout") {
+        const body = await readBody(req);
+        const { branch } = JSON.parse(body || "{}");
+        const b = sanitizeBranch(branch);
+        if (!b) return send(res, 400, "application/json", '{"error":"branch required"}');
+        const git = new Git(opts.repoRoot);
+        // Refuse to switch with unsaved work — git would clobber or block anyway.
+        if ((await git.tryRun(["status", "--porcelain"])).stdout.trim()) {
+          return send(res, 409, "application/json", '{"error":"working tree has uncommitted changes — stash or commit them first"}');
+        }
+        const r = await git.tryRun(["checkout", b]);
+        if (r.code !== 0) {
+          return send(res, 409, "application/json", JSON.stringify({ error: r.stderr.trim() || `could not checkout ${b}` }));
+        }
+        log(`checkout → working tree now on ${b}`);
+        return send(res, 200, "application/json", JSON.stringify({ ok: true, branch: b }));
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/stash") {
+        const git = new Git(opts.repoRoot);
+        const r = await git.tryRun(["stash", "push", "-u", "-m", "harness dashboard"]);
+        if (r.code !== 0) {
+          return send(res, 409, "application/json", JSON.stringify({ error: r.stderr.trim() || "stash failed" }));
+        }
+        log(`stash → ${r.stdout.trim() || "saved working tree"}`);
+        return send(res, 200, "application/json", JSON.stringify({ ok: true, detail: r.stdout.trim() }));
       }
 
       if (url.pathname === "/api/status") {
@@ -156,8 +203,50 @@ export function startServer(opts: ServerOptions): http.Server {
         const chunk = await readAgentLog(opts.repoRoot, branch, offset);
         return send(res, 200, "application/json", JSON.stringify(chunk));
       }
+      if (url.pathname === "/api/agents") {
+        const agents = await listAgentSessions(opts.repoRoot);
+        return send(res, 200, "application/json", JSON.stringify({ agents }));
+      }
+      if (url.pathname === "/api/gitgraph") {
+        // Structured commit graph across every local branch (each worktree's
+        // branch + main), newest first — the dashboard draws it as vector lines.
+        const git = new Git(opts.repoRoot);
+        const SEP = "\x1f";
+        const r = await git.tryRun([
+          "log", `--pretty=%H${SEP}%P${SEP}%D${SEP}%s`, "--branches", "--date-order", "-n", "300",
+        ]);
+        const commits = r.stdout
+          .split("\n")
+          .map((l) => l.trim())
+          .filter(Boolean)
+          .map((l) => {
+            const [hash, parents, refs, subject] = l.split(SEP);
+            return {
+              hash: hash ?? "",
+              parents: parents ? parents.split(" ").filter(Boolean) : [],
+              refs: refs ?? "",
+              subject: subject ?? "",
+            };
+          });
+        return send(res, 200, "application/json", JSON.stringify({ commits }));
+      }
+      if (url.pathname === "/api/agentlog") {
+        const id = url.searchParams.get("id") ?? "";
+        const offset = Number(url.searchParams.get("offset") ?? "0") || 0;
+        if (!id) return send(res, 400, "application/json", '{"error":"id required"}');
+        const chunk = await readSessionLog(opts.repoRoot, id, offset);
+        return send(res, 200, "application/json", JSON.stringify(chunk));
+      }
+      if (url.pathname === "/api/branches") {
+        const branches = await readBranchLog(opts.repoRoot);
+        return send(res, 200, "application/json", JSON.stringify({ branches }));
+      }
       if (url.pathname === "/" || url.pathname === "/index.html") {
         const html = await readFile(path.join(WEB_DIR, "index.html"), "utf8");
+        return send(res, 200, "text/html; charset=utf-8", html);
+      }
+      if (url.pathname === "/branches" || url.pathname === "/branches.html") {
+        const html = await readFile(path.join(WEB_DIR, "branches.html"), "utf8");
         return send(res, 200, "text/html; charset=utf-8", html);
       }
       send(res, 404, "text/plain", "not found");

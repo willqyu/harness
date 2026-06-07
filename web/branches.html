@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>harness · branch log</title>
+    <style>
+      :root {
+        --bg: #0d1117; --panel: #161b22; --border: #30363d; --fg: #e6edf3;
+        --muted: #8b949e; --accent: #58a6ff;
+        --ok: #3fb950; --run: #d29922; --fail: #f85149; --pending: #6e7681;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; background: var(--bg); color: var(--fg);
+        font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      * { scrollbar-width: thin; scrollbar-color: #30363d transparent; }
+      ::-webkit-scrollbar { width: 10px; height: 10px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb {
+        background: #30363d; border-radius: 8px;
+        border: 2px solid transparent; background-clip: padding-box;
+      }
+      ::-webkit-scrollbar-thumb:hover { background: #4b545f; background-clip: padding-box; }
+      header {
+        display: flex; align-items: baseline; gap: 16px;
+        padding: 16px 24px; border-bottom: 1px solid var(--border);
+      }
+      header h1 { font-size: 16px; margin: 0; letter-spacing: 0.5px; }
+      header a { color: var(--accent); text-decoration: none; font-size: 12px; }
+      header a:hover { text-decoration: underline; }
+      header .repo { color: var(--muted); font-size: 12px; }
+      header .dot { margin-left: auto; color: var(--muted); font-size: 12px; }
+      main { padding: 24px; display: grid; gap: 16px; max-width: 1100px; margin: 0 auto; }
+      .empty { padding: 16px; color: var(--muted); }
+      .badge {
+        display: inline-block; padding: 1px 8px; border-radius: 10px;
+        font-size: 11px; font-weight: 700; text-transform: uppercase;
+      }
+      .s-completed, .s-merged, .s-landed { background: rgba(63,185,80,.15); color: var(--ok); }
+      .s-running { background: rgba(210,153,34,.15); color: var(--run); }
+      .s-failed { background: rgba(248,81,73,.15); color: var(--fail); }
+      .s-pending, .s-open { background: rgba(110,118,129,.2); color: var(--pending); }
+      .sha { color: var(--accent); }
+      .muted { color: var(--muted); }
+      .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
+      .card.failed { border-color: rgba(248,81,73,.5); }
+      .row {
+        display: flex; align-items: center; gap: 10px; padding: 12px 16px;
+        cursor: pointer; user-select: none;
+      }
+      .row:hover .branch { color: var(--accent); }
+      .caret { display: inline-block; width: 14px; color: var(--muted); }
+      .branch { font-weight: 600; }
+      .row .spacer { margin-left: auto; }
+      .row .meta { color: var(--muted); font-size: 11px; }
+      .detail { border-top: 1px solid var(--border); padding: 14px 16px; display: none; }
+      .card.open .detail { display: block; }
+      .detail h3 {
+        font-size: 10px; text-transform: uppercase; letter-spacing: 1px;
+        color: var(--muted); margin: 0 0 6px;
+      }
+      .detail section { margin-bottom: 16px; }
+      .detail section:last-child { margin-bottom: 0; }
+      .brief, .context {
+        white-space: pre-wrap; word-break: break-word; font-size: 12px;
+        background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+        padding: 10px 12px; max-height: 280px; overflow: auto;
+      }
+      .commits { display: grid; gap: 4px; }
+      .commit { display: flex; gap: 10px; font-size: 12px; align-items: baseline; }
+      .commit .csha { color: var(--accent); flex: none; }
+      .commit .csub { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .commit .cdate { color: var(--muted); font-size: 11px; flex: none; }
+      .err { color: var(--fail); font-size: 12px; margin-top: 4px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>⛓ harness · branch log</h1>
+      <a href="/">← dashboard</a>
+      <span class="repo" id="repo">—</span>
+      <span class="dot" id="updated">connecting…</span>
+    </header>
+    <main id="list"><div class="empty">loading…</div></main>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+      const short = (sha) => (sha ? esc(String(sha).slice(0, 8)) : "—");
+      const badge = (cls, label) => `<span class="badge ${cls}">${esc(label)}</span>`;
+      const when = (s) => (s ? esc(String(s).replace("T", " ").slice(0, 19)) : "");
+
+      // Branches the user has expanded — preserved across refreshes.
+      const open = new Set();
+
+      function renderCommits(commits) {
+        if (!commits.length) return '<div class="muted">no distinct commits (nothing diverging from main).</div>';
+        return `<div class="commits">${commits.map((c) => `
+          <div class="commit">
+            <span class="csha">${short(c.sha)}</span>
+            <span class="csub" title="${esc(c.subject)}">${esc(c.subject) || "—"}</span>
+            <span class="cdate">${when(c.date)}</span>
+          </div>`).join("")}</div>`;
+      }
+
+      function renderCard(b) {
+        const isOpen = open.has(b.branch);
+        const stateBadge = b.state ? badge("s-" + b.state, b.state) : badge("s-open", "unknown");
+        const landed = b.merged ? badge("s-landed", "landed") : badge("s-open", "unmerged");
+        const detail = `
+          <div class="detail">
+            ${b.error ? `<div class="err">✗ ${esc(b.error)}</div>` : ""}
+            <section>
+              <h3>Task brief</h3>
+              <div class="brief">${esc(b.description) || '<span class="muted">— no checkpoint brief recorded —</span>'}</div>
+            </section>
+            ${b.context ? `<section><h3>Agent summary</h3><div class="context">${esc(b.context)}</div></section>` : ""}
+            <section>
+              <h3>Commits developed (${b.commits.length})</h3>
+              ${renderCommits(b.commits)}
+            </section>
+          </div>`;
+        return `
+          <div class="card ${isOpen ? "open" : ""} ${b.error ? "failed" : ""}">
+            <div class="row" data-branch="${esc(b.branch)}">
+              <span class="caret">${isOpen ? "▾" : "▸"}</span>
+              <span class="branch">${esc(b.branch)}</span>
+              ${stateBadge} ${landed}
+              <span class="spacer"></span>
+              <span class="meta">${b.taskId ? esc(b.taskId) + " · " : ""}${b.commits.length} commit${b.commits.length !== 1 ? "s" : ""} · ${short(b.head)} · ${when(b.updatedAt || b.createdAt)}</span>
+            </div>
+            ${detail}
+          </div>`;
+      }
+
+      document.addEventListener("click", (ev) => {
+        const row = ev.target.closest(".row[data-branch]");
+        if (!row) return;
+        const b = row.dataset.branch;
+        if (open.has(b)) open.delete(b); else open.add(b);
+        const card = row.closest(".card");
+        card.classList.toggle("open");
+        card.querySelector(".caret").textContent = open.has(b) ? "▾" : "▸";
+      });
+
+      async function tick() {
+        try {
+          const r = await fetch("/api/branches");
+          const { branches } = await r.json();
+          const sr = await fetch("/api/status").then((x) => x.json()).catch(() => null);
+          if (sr) $("repo").textContent = sr.repoRoot;
+          $("updated").textContent = "updated " + new Date().toLocaleTimeString();
+          $("list").innerHTML = (branches && branches.length)
+            ? branches.map(renderCard).join("")
+            : '<div class="empty">No branches developed yet.</div>';
+        } catch (e) {
+          $("updated").textContent = "disconnected";
+        }
+      }
+      tick();
+      setInterval(tick, 4000);
+    </script>
+  </body>
+</html>
