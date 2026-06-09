@@ -196,6 +196,14 @@
         font-size: 12px; display: flex; align-items: center; gap: 8px;
       }
       .rec b { color: var(--fg); }
+      .hydra-panel h2 { display: flex; align-items: baseline; gap: 8px; }
+      #hydra-cap { font-size: 12px; font-weight: 400; }
+      .hydra-frame {
+        display: block; width: 100%; aspect-ratio: 680 / 440; border: 0;
+        background: #0d0a1a; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+      }
+      .hydra-hint { padding: 10px 16px 14px; margin: 0; font-size: 11px; color: var(--muted); line-height: 1.7; }
+      .hydra-hint code { background: var(--bg); padding: 1px 5px; border-radius: 4px; font-size: 10px; }
     </style>
   </head>
   <body>
@@ -244,6 +252,12 @@
       </div>
 
       <aside class="col-side">
+        <section class="panel hydra-panel">
+          <h2>Fleet hydra <span id="hydra-cap" class="muted"></span></h2>
+          <iframe id="hydra-frame" class="hydra-frame" src="/hydra.html?embed=1" title="Fleet hydra" loading="lazy"></iframe>
+          <p class="hint hydra-hint">One head per worker · vibe tracks fleet state — <code>sleepy</code> idle · <code>busy</code> working · <code>disco</code> integrating · <code>panic</code> failure/escalation · <code>chill</code> all done.</p>
+        </section>
+
         <section class="panel">
           <h2>Integration → main</h2>
           <div id="integrate-rec"></div>
@@ -857,6 +871,7 @@
         try {
           const r = await fetch("/api/status");
           const s = await r.json();
+          driveHydra(s);
           $("repo").textContent = s.repoRoot;
           $("updated").textContent = "updated " + new Date(s.generatedAt).toLocaleTimeString();
           $("integration").innerHTML = renderIntegration(s.integration);
@@ -897,6 +912,78 @@
           $("updated").textContent = "disconnected";
         }
       }
+      // ---- Fleet hydra: one head PER worker, each head's vibe = that agent's state.
+      // A single sleeping/failed agent only affects its own head. ----
+      let lastFleet = null;
+      function workerVibe(w, s, escalated) {
+        if (w.state === "failed" || escalated.has(w.branch)) return "panic";
+        if (w.state === "completed") return s.integrating ? "disco" : "sleepy";
+        if (w.state === "running") {
+          if (w.lastActivityAt) {
+            const age = (Date.now() - new Date(w.lastActivityAt).getTime()) / 1000;
+            if (age > 90) return "sleepy"; // running but quiet — the agent is dozing
+          }
+          return "busy";
+        }
+        return "zen"; // pending / queued
+      }
+      // Track each branch's last-seen state + a per-branch celebration deadline,
+      // so a freshly-completed task throws a disco fireworks party before it dozes.
+      const prevState = {};
+      const celebrateUntil = {};
+      const CELEBRATE_MS = 5000;
+      function driveHydra(s) {
+        lastFleet = s;
+        const workers = s.workers || [];
+        const escalated = new Set(
+          ((s.integration && s.integration.steps) || [])
+            .filter((st) => String(st.status) === "escalated")
+            .map((st) => st.branch)
+        );
+        const now = Date.now();
+        const frame0 = $("hydra-frame");
+        // detect running -> completed transitions = a task just finished -> celebrate
+        workers.forEach((w) => {
+          const prev = prevState[w.branch];
+          if (w.state === "completed" && prev && prev !== "completed") {
+            celebrateUntil[w.branch] = now + CELEBRATE_MS;
+            if (frame0 && frame0.contentWindow) {
+              frame0.contentWindow.postMessage(
+                { source: "hydra-cmd", cmd: "celebrate", arg: CELEBRATE_MS / 1000 },
+                location.origin
+              );
+            }
+          }
+          prevState[w.branch] = w.state;
+        });
+        // a worker merged into main has folded in — drop its head (it puffs away on integrate)
+        const live = workers.filter((w) => !w.merged);
+        const vibes = live
+          .map((w) => (celebrateUntil[w.branch] > now ? "disco" : workerVibe(w, s, escalated)))
+          .slice(0, 18);
+        const send = vibes.length ? vibes : ["sleepy"];
+        // caption: head count + a per-vibe breakdown
+        const counts = {};
+        send.forEach((v) => (counts[v] = (counts[v] || 0) + 1));
+        const cap = $("hydra-cap");
+        if (cap)
+          cap.textContent =
+            `${send.length} head${send.length !== 1 ? "s" : ""} · ` +
+            Object.entries(counts).map(([k, n]) => `${n} ${k}`).join(" · ");
+        const frame = $("hydra-frame");
+        if (frame && frame.contentWindow) {
+          frame.contentWindow.postMessage(
+            { source: "hydra-cmd", cmd: "setHeadVibes", arg: send },
+            location.origin
+          );
+        }
+      }
+      // postMessages sent before the iframe loads are dropped — re-sync on load.
+      (function () {
+        const frame = $("hydra-frame");
+        if (frame) frame.addEventListener("load", () => { if (lastFleet) driveHydra(lastFleet); });
+      })();
+
       tick();
       setInterval(tick, 2000);
       tickAgents();

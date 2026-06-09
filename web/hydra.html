@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Code Hydra</title>
+<style>
+  :root{
+    --bg:#0d0a1a; --panel:#16122a; --border:rgba(255,255,255,0.12);
+    --text:#e8e4f0; --muted:#9a93b5;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; min-height:100vh; background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    display:flex; align-items:center; justify-content:center; padding:24px;
+  }
+  .wrap{width:100%; max-width:720px; display:flex; flex-direction:column; gap:14px}
+  .stage{
+    background:#0d0a1a; border:1px solid var(--border); border-radius:14px;
+    overflow:hidden; display:flex; align-items:center; justify-content:center;
+  }
+  canvas{width:100%; height:auto; display:block; image-rendering:pixelated}
+  .controls{display:flex; flex-wrap:wrap; align-items:center; gap:10px}
+  .vibebar{display:flex; flex-wrap:wrap; gap:8px}
+  button{
+    background:transparent; color:var(--text); border:1px solid var(--border);
+    border-radius:8px; padding:8px 14px; font-size:14px; cursor:pointer;
+    transition:background .15s, transform .05s, border-color .15s;
+  }
+  button:hover{background:var(--panel)}
+  button:active{transform:scale(.97)}
+  button.active{background:var(--panel); border-color:rgba(255,255,255,0.35)}
+  .slider{display:flex; align-items:center; gap:8px; flex:1; min-width:200px}
+  label{font-size:13px; color:var(--muted)}
+  input[type=range]{flex:1; accent-color:#f046c8}
+  .val{font-size:14px; font-weight:600; min-width:18px}
+  .hint{font-size:12px; color:var(--muted); line-height:1.6}
+  code{background:var(--panel); padding:2px 6px; border-radius:5px; font-size:12px}
+  /* embed mode (?embed): the fleet drives the hydra, so hide the manual controls */
+  body.embed{padding:0; background:transparent}
+  body.embed .controls, body.embed .vibebar, body.embed .hint{display:none}
+  body.embed .wrap{gap:0}
+  body.embed .stage{border:none; border-radius:0}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="stage">
+    <canvas id="hydra" width="680" height="440"></canvas>
+  </div>
+
+  <div class="controls">
+    <button id="grow">＋ Grow head</button>
+    <button id="cut">🗑 Remove head</button>
+    <div class="slider">
+      <label for="n">Heads</label>
+      <input type="range" id="n" min="1" max="18" step="1" value="5">
+      <span class="val" id="nout">5</span>
+    </div>
+  </div>
+
+  <div class="vibebar" id="vibebar"></div>
+
+  <p class="hint">
+    Vibes: <code>chill</code> · <code>busy</code> · <code>zen</code> ·
+    <code>disco</code> (color-cycling heads + single-color fireworks) ·
+    <code>panic</code> (everyone screams) · <code>snek</code> (necks go wild) ·
+    <code>sleepy</code> (heads doze with zzz, moon, twinkling + shooting stars).<br>
+    JS API: <code>hydra.setVibe(name)</code> · <code>hydra.setHeads(n)</code> ·
+    <code>hydra.getState()</code> · <code>hydra.getVibe()</code> ·
+    <code>hydra.on('change', cb)</code> · <code>hydra.getEndpoints()</code>.
+    See README.md for the full API + postMessage bridge.
+  </p>
+
+</div>
+
+<script>
+(function(){
+  const cv = document.getElementById('hydra');
+  const ctx = cv.getContext('2d');
+  const W = cv.width, H = cv.height;
+  const P = 8; // pixel block size
+
+  const COL = {
+    body:'#d78788', bodyD:'#b46468', eye:'#140c14',
+    green:'#3ddc84', greenD:'#23a05c',
+    fuch:'#f046c8', fuchD:'#be23a0',
+    white:'#f5f0fa', spark:'#fce7ff',
+    moon:'#e8e0c8', moonD:'#c9bf9e'
+  };
+  const DISCO = [['#3ddc84','#23a05c'],['#f046c8','#be23a0'],['#378add','#185fa5'],['#ef9f27','#ba7517'],['#e24b4a','#a32d2d']];
+  const FW_COLORS = ['#3ddc84','#f046c8','#378add','#ef9f27','#e24b4a','#fce7ff'];
+
+  function px(gx, gy, c){ ctx.fillStyle = c; ctx.fillRect(gx*P, gy*P, P, P); }
+  function pxa(gx, gy, c, a){ ctx.globalAlpha = Math.max(0,Math.min(1,a)); ctx.fillStyle = c; ctx.fillRect(gx*P, gy*P, P, P); ctx.globalAlpha = 1; }
+  function rect(x0,y0,x1,y1,c){ for(let y=y0;y<=y1;y++) for(let x=x0;x<=x1;x++) px(x,y,c); }
+
+  function drawZ(gx, gy, big, alpha, c){
+    if(big){ for(let x=0;x<4;x++) pxa(gx+x, gy, c, alpha); pxa(gx+2, gy+1, c, alpha); pxa(gx+1, gy+2, c, alpha); for(let x=0;x<4;x++) pxa(gx+x, gy+3, c, alpha); }
+    else { for(let x=0;x<3;x++) pxa(gx+x, gy, c, alpha); pxa(gx+1, gy+1, c, alpha); for(let x=0;x<3;x++) pxa(gx+x, gy+2, c, alpha); }
+  }
+
+  // an alarmed "!" that pops above a head being grabbed (mirror of the sleepy zzz)
+  function drawBang(gx, gy, alpha){
+    const c = '#ffe24a';
+    pxa(gx, gy, c, alpha); pxa(gx, gy+1, c, alpha);   // stem
+    pxa(gx, gy+3, c, alpha);                          // dot
+  }
+
+  const GW = Math.floor(W/P), GH = Math.floor(H/P);
+
+  function drawMoon(alpha){
+    if(alpha <= 0.01) return;
+    const cx = GW - 13, cy = 9, r = 5;
+    for(let y=-r; y<=r; y++) for(let x=-r; x<=r; x++){ if(x*x + y*y <= r*r) pxa(cx+x, cy+y, (x+y < -1) ? COL.moon : COL.moonD, alpha); }
+    const ox = 3;
+    for(let y=-r; y<=r; y++) for(let x=-r; x<=r; x++){ if((x-ox)*(x-ox) + y*y <= (r+0.5)*(r+0.5)) ctx.clearRect((cx+x)*P, (cy+y)*P, P, P); }
+    pxa(cx-2, cy-1, COL.moonD, alpha*0.9); pxa(cx-3, cy+2, COL.moonD, alpha*0.9); pxa(cx-1, cy+1, COL.moonD, alpha*0.7);
+  }
+
+  const NIGHT_STARS = [[6,6],[18,4],[30,8],[3,16],[24,14],[40,5],[12,3],[36,18],[8,22],[44,11]];
+  function drawNightSky(alpha, now){
+    if(alpha <= 0.01) return;
+    NIGHT_STARS.forEach((s,k)=>{ const tw = Math.sin(now/500 + k*1.3)*0.5 + 0.5; pxa(s[0], s[1], COL.white, alpha * (0.35 + tw*0.6)); });
+  }
+
+  // ---- shooting stars (sleepy) ----
+  let shooters = [];
+  function spawnShooter(){
+    const fromLeft = Math.random() < 0.5;
+    shooters.push({ x: fromLeft ? -3 : GW+3, y: 1 + Math.random()*(GH*0.4),
+      vx: (fromLeft?1:-1)*(28+Math.random()*16), vy: 6+Math.random()*10, life:0, max:0.9+Math.random()*0.4 });
+  }
+  function updateShooters(dt, a){
+    if(a > 0.2 && Math.random() < dt*2.2*a) spawnShooter();
+    for(let i=shooters.length-1;i>=0;i--){ const s=shooters[i]; s.x+=s.vx*dt; s.y+=s.vy*dt; s.life+=dt;
+      if(s.life>s.max || s.x<-6 || s.x>GW+6 || s.y>GH) shooters.splice(i,1); }
+  }
+  function drawShooters(a){
+    if(a <= 0.01) return;
+    shooters.forEach(s=>{ const hx=Math.round(s.x), hy=Math.round(s.y); const f=Math.sin((s.life/s.max)*Math.PI)*a;
+      pxa(hx,hy,COL.white,f); const dir = s.vx<0?1:-1;
+      for(let t=1;t<=4;t++) pxa(hx+dir*t, hy-Math.round(t*s.vy/Math.abs(s.vx||1)), COL.spark, f*(1-t*0.22)); });
+  }
+
+  // ---- fireworks (disco) ----
+  let rockets = [];
+  let bursts = [];
+  function spawnRocket(){
+    const tx = 4 + Math.random()*(GW-8);
+    const ty = 3 + Math.random()*(GH*0.30);
+    rockets.push({ x:tx, y:GH-16, tx, ty, vy:-(34+Math.random()*8), color: FW_COLORS[(Math.random()*FW_COLORS.length)|0] });
+  }
+  function explode(x, y, color){
+    const n = 14 + (Math.random()*6|0); const parts = [];
+    for(let i=0;i<n;i++){ const ang = (i/n)*Math.PI*2 + Math.random()*0.2; const sp = 10 + Math.random()*8;
+      parts.push({ x, y, vx:Math.cos(ang)*sp, vy:Math.sin(ang)*sp }); }
+    bursts.push({ parts, color, life:0, max:1.0+Math.random()*0.3 });
+  }
+  function updateFireworks(dt, discoAlpha){
+    if(discoAlpha > 0.2 && Math.random() < dt*2.4*discoAlpha) spawnRocket();
+    for(let i=rockets.length-1;i>=0;i--){ const r = rockets[i]; r.y += r.vy*dt;
+      if(r.y <= r.ty){ explode(r.tx, r.ty, r.color); rockets.splice(i,1); } }
+    for(let i=bursts.length-1;i>=0;i--){ const b = bursts[i]; b.life += dt;
+      b.parts.forEach(p=>{ p.x += p.vx*dt; p.y += p.vy*dt; p.vy += 9*dt; p.vx *= 0.96; });
+      if(b.life > b.max) bursts.splice(i,1); }
+  }
+  function drawFireworks(discoAlpha){
+    if(discoAlpha <= 0.01) return;
+    rockets.forEach(r=>{ const x=Math.round(r.x), y=Math.round(r.y);
+      pxa(x,y,r.color,discoAlpha); pxa(x,y+1,COL.spark,discoAlpha*0.6); pxa(x,y+2,COL.spark,discoAlpha*0.3); });
+    bursts.forEach(b=>{ const fade = (1 - b.life/b.max); const a = fade*fade*discoAlpha;
+      b.parts.forEach(p=>{ pxa(Math.round(p.x), Math.round(p.y), b.color, a);
+        if(fade > 0.6) pxa(Math.round(p.x), Math.round(p.y)-1, COL.spark, a*0.5); }); });
+  }
+
+  // ---- smoke puffs (head despawn) ----
+  const SMOKE = ['#d9d2e6','#b3aac9','#8f86a8','#6e6688'];
+  let puffs = [];
+  function spawnPuff(gx, gy){
+    const parts = []; const n = 12;
+    for(let i=0;i<n;i++){ const ang = Math.random()*Math.PI*2; const sp = 3 + Math.random()*9;
+      parts.push({ x:gx, y:gy, vx:Math.cos(ang)*sp, vy:Math.sin(ang)*sp - 5, c: SMOKE[i % SMOKE.length] }); }
+    puffs.push({ parts, life:0, max:0.55 + Math.random()*0.25 });
+  }
+  function updatePuffs(dt){
+    for(let i=puffs.length-1;i>=0;i--){ const p=puffs[i]; p.life += dt;
+      p.parts.forEach(q=>{ q.x += q.vx*dt; q.y += q.vy*dt; q.vy += 3*dt; q.vx *= 0.93; q.vy *= 0.95; });
+      if(p.life > p.max) puffs.splice(i,1); }
+  }
+  function drawPuffs(){
+    puffs.forEach(p=>{ const f = 1 - p.life/p.max; const a = f*0.9;
+      p.parts.forEach(q=>{ const x=Math.round(q.x), y=Math.round(q.y);
+        pxa(x, y, q.c, a); if(f > 0.55) pxa(x+1, y, q.c, a*0.55); }); });
+  }
+
+  let heads = [];
+  let speedScale = 1, amp = 1;
+  let nightLevel = 0, discoLevel = 0;
+  let celebrateT = 0;   // seconds of forced full-fireworks celebration remaining
+  // drag state: which head is grabbed, and where the pointer is (grid coords)
+  let dragged = null, dragX = 0, dragY = 0, downX = 0, downY = 0, bodyArmed = false;
+  const JUMP = 70;   // upward impulse (grid/s) when a head is clicked (not dragged)
+
+  const VIBES = [
+    {name:'chill', speed:0.6,  amp:1.0},
+    {name:'busy',  speed:1.4,  amp:1.4},
+    {name:'zen',   speed:0.32, amp:0.6},
+    {name:'disco', speed:1.1,  amp:1.2},
+    {name:'panic', speed:2.6,  amp:2.2},
+    {name:'snek',  speed:0.9,  amp:3.4},
+    {name:'sleepy',speed:0.18, amp:0.35}
+  ];
+  const VIBE_BY_NAME = Object.fromEntries(VIBES.map(v=>[v.name, v]));
+  function vibeByName(name){ return VIBE_BY_NAME[name] || VIBES[0]; }
+  let vibeIdx = 0;
+  let tGlobal = 0;
+
+  // ---- event system ----
+  const listeners = { change:[], head:[], vibe:[] };
+  function emit(type, detail){
+    (listeners[type]||[]).forEach(cb=>{ try{ cb(detail); }catch(e){} });
+    if(type === 'change'){ try{ if(window.parent && window.parent !== window) window.parent.postMessage({ source:'hydra', type:'change', detail }, '*'); }catch(e){} }
+  }
+  function snapshot(){ return { count: heads.length, vibe: VIBES[vibeIdx].name, vibeIndex: vibeIdx, endpoints: endpoints() }; }
+
+  function makeHead(i){
+    return { phase: Math.random()*Math.PI*2, blink: Math.random()*4 + 2, blinkT: 0, blinking: 0,
+      green: (i % 2 === 0), colorShift: Math.random(), zzOffset: Math.random()*Math.PI*2,
+      anchorX:0, anchorY:0, hx:0, hy:0, big:true, dozing:false, endpoint:{x:0, y:0},
+      // per-head vibe — each agent's head animates independently
+      vibe: VIBES[vibeIdx].name,
+      // spring physics: px/py = live position (grid), vx/vy = velocity, dragging = grabbed
+      px:NaN, py:NaN, vx:0, vy:0, dragging:false, bangT:0, grow:0 };
+  }
+
+  function setHeads(n, silent){
+    n = Math.max(1, Math.min(18, n|0));
+    const prev = heads.length;
+    if(n > heads.length){ while(heads.length < n) heads.push(makeHead(heads.length)); }
+    else if(n < heads.length){
+      // despawn: each removed head goes out in a puff of smoke at its last position
+      for(let i=n;i<heads.length;i++){ const h=heads[i]; spawnPuff(isFinite(h.px)?h.px:h.anchorX, isFinite(h.py)?h.py:h.anchorY); }
+      heads.length = n;
+    }
+    heads.forEach((h,i)=>{ h.green = (i%2===0); });
+    document.getElementById('n').value = n; document.getElementById('nout').textContent = n;
+    if(!silent && n !== prev){ emit('head', { count:n, prev }); emit('change', snapshot()); }
+    return heads.length;
+  }
+
+  const body = { x0: Math.floor(GW/2)-11, x1: Math.floor(GW/2)+11, y0: GH-15, y1: GH-5 };
+
+  function headColors(h, i){
+    if(h.vibe === 'disco'){ const k = (Math.floor(tGlobal*2 + h.colorShift*5 + i) % DISCO.length + DISCO.length) % DISCO.length; return DISCO[k]; }
+    return h.green ? [COL.green, COL.greenD] : [COL.fuch, COL.fuchD];
+  }
+
+  function drawBody(){
+    rect(body.x0, body.y0, body.x1, body.y1, COL.body);
+    [[body.x0,body.y0],[body.x1,body.y0],[body.x0,body.y1],[body.x1,body.y1]].forEach(c=> ctx.clearRect(c[0]*P, c[1]*P, P, P));
+    rect(body.x0+1, body.y1, body.x1-1, body.y1, COL.bodyD);
+    [body.x0+2, body.x0+6, body.x1-6, body.x1-2].forEach(lx=>{ rect(lx, body.y1+1, lx, body.y1+2, COL.body); px(lx, body.y1+2, COL.bodyD); });
+    rect(body.x0+5, body.y0+2, body.x0+6, body.y0+4, COL.eye);
+    rect(body.x1-6, body.y0+2, body.x1-5, body.y0+4, COL.eye);
+  }
+
+  function drawHead(cx, cy, h, big, i){
+    const [base, bd] = headColors(h, i);
+    const v = h.vibe; const panic = (v === 'panic'), sleepy = (v === 'sleepy');
+    const stressed = h.dragging;
+    // spawn grow: head swells from a nub to full size as it rises out of the body
+    const g = Math.max(0, Math.min(1, h.grow));
+    const w = Math.max(3, Math.round((big ? 7 : 5) * (0.45 + 0.55*g)));
+    const ht = Math.max(3, Math.round((big ? 6 : 5) * (0.45 + 0.55*g)));
+    const x0 = Math.round(cx - w/2), y0 = Math.round(cy - ht/2);
+    rect(x0, y0, x0+w-1, y0+ht-1, base);
+    [[x0,y0],[x0+w-1,y0],[x0,y0+ht-1],[x0+w-1,y0+ht-1]].forEach(c=>ctx.clearRect(c[0]*P,c[1]*P,P,P));
+    px(x0-1, y0+1, base); px(x0+w, y0+1, base);
+    rect(x0+1, y0+ht-1, x0+w-2, y0+ht-1, bd);
+    const ey = y0+2;
+    h.dozing = sleepy && !stressed && (Math.sin(tGlobal*1.2 + h.colorShift*6) > 0.2);
+    if(stressed){
+      // strained "><" eyes with brows angled up at the outer corners, gritted open mouth
+      px(x0+1, ey, COL.eye); px(x0+w-2, ey, COL.eye);
+      px(x0, ey-1, COL.eye); px(x0+w-1, ey-1, COL.eye);
+      rect(x0+2, y0+ht-2, x0+w-3, y0+ht-2, COL.eye);
+      if(big) px(x0 + (w>>1), y0+ht-3, COL.eye);
+      // a sweat bead that drips down the side
+      const drip = Math.floor((tGlobal*4 + h.colorShift*7) % 3);
+      pxa(x0 + w, y0 + drip, '#bfe6ff', 0.92);
+    }
+    else if(h.blinking > 0 || h.dozing){ px(x0+1, ey+1, COL.eye); px(x0+w-2, ey+1, COL.eye); }
+    else if(panic){ px(x0+1, ey, COL.eye); px(x0+w-2, ey, COL.eye); px(x0, ey-1, COL.white); px(x0+w-1, ey-1, COL.white); }
+    else if(big){ rect(x0+1, ey, x0+1, ey+1, COL.eye); rect(x0+w-2, ey, x0+w-2, ey+1, COL.eye); px(x0, ey, COL.white); }
+    else { px(x0+1, ey, COL.eye); px(x0+w-2, ey, COL.eye); }
+    if(panic && big && !stressed){ rect(x0+2, y0+ht-2, x0+w-3, y0+ht-2, COL.eye); }
+    h.endpoint.x = cx*P; h.endpoint.y = (y0+ht)*P;
+    if(h.dragging || h.bangT > 0){
+      const bob = Math.round(Math.sin(tGlobal*9)*0.5);
+      const a = h.dragging ? 1 : Math.min(1, h.bangT*2.5);
+      drawBang(x0 + (w>>1), y0 - 4 + bob, a);
+    }
+    if(h.dozing){
+      const rise = (tGlobal*0.9 + h.zzOffset) % 3; const baseZx = x0 + w, baseZy = y0 - 1;
+      [{dy:0,big:false,off:0},{dy:-2,big:false,off:1},{dy:-4,big:true,off:2}].forEach(st=>{
+        const local = (rise - st.off); if(local < 0 || local > 1) return;
+        const a = Math.sin(local*Math.PI); const drift = Math.round(Math.sin((tGlobal+st.off)*2)*0.5);
+        drawZ(baseZx + 1 + drift, baseZy + st.dy - Math.round(local*1.5), st.big, a*0.95, COL.spark);
+      });
+    }
+  }
+
+  // Neck marches along the anchor->head vector by distance, so it works in any
+  // direction and visibly stretches when a head is dragged away. Wobble is applied
+  // perpendicular to the neck; a dragged (taut) neck barely wobbles.
+  function drawNeck(ax, ay, h, i){
+    const hx = h.px, hy = h.py;
+    const col = headColors(h, i)[1];
+    const dx = hx - ax, dy = hy - ay; const dist = Math.hypot(dx, dy); if(dist < 0.001) return;
+    const steps = Math.max(1, Math.round(dist * 1.2));
+    const wild = (h.vibe === 'snek') ? 3.0 : 1.0;
+    const ampN = vibeByName(h.vibe).amp * (h.dragging ? 0.18 : 1);
+    const nx = -dy/dist, ny = dx/dist;            // unit perpendicular
+    const vertical = Math.abs(dx) <= Math.abs(dy); // keep 2px thickness without gaps
+    for(let s=0; s<=steps; s++){ const t = s/steps;
+      const wob = Math.sin(h.phase + t*3.0*wild)*(t*2.4)*ampN;
+      const x = Math.round(ax + dx*t + nx*wob);
+      const y = Math.round(ay + dy*t + ny*wob);
+      px(x, y, col);
+      if(t < 0.6){ if(vertical) px(x+1, y, col); else px(x, y+1, col); }
+    }
+  }
+
+  function layout(){
+    const n = heads.length; const cxBody = (body.x0+body.x1)/2, span = (body.x1-body.x0) - 4;
+    heads.forEach((h,i)=>{
+      const droop = (h.vibe === 'sleepy') ? 1 : 0;   // only sleeping heads droop
+      const t = n===1 ? 0.5 : i/(n-1);
+      h.anchorX = body.x0+2 + t*span; h.anchorY = body.y0;
+      const spread = 26 + (n>9 ? (n-9)*4 : 0); const hx = cxBody + (t-0.5)*spread; const arc = Math.sin(t*Math.PI);
+      let hy = body.y0 - 8 - arc*12; if(droop) hy = body.y0 - 5 - arc*5 + Math.sin(tGlobal*0.8 + i)*0.5;
+      h.hx = hx; h.hy = hy; h.big = (n<=3) ? true : (arc > 0.45);
+    });
+  }
+
+  function endpoints(){ return heads.map((h,i)=>({index:i, color:headColors(h,i)[0], x:h.endpoint.x, y:h.endpoint.y})); }
+
+  let last = performance.now();
+  function frame(now){
+    const dt = Math.min(0.05, (now-last)/1000); last = now; tGlobal += dt;
+    ctx.clearRect(0,0,W,H);
+    // Ambient layers reflect the aggregate mood: the sky darkens with the share
+    // of sleeping heads, fireworks swell with the share of disco heads.
+    const nHeads = heads.length || 1;
+    const sleepyFrac = heads.filter(h=>h.vibe==='sleepy').length / nHeads;
+    const discoFrac  = heads.filter(h=>h.vibe==='disco').length / nHeads;
+    if(celebrateT > 0) celebrateT -= dt;
+    // a celebration (or any disco head) drives the fireworks; celebration forces it to full
+    const discoTarget = Math.max(discoFrac, celebrateT > 0 ? 1 : 0);
+    nightLevel += (sleepyFrac - nightLevel) * Math.min(1, dt*3);
+    discoLevel += (discoTarget - discoLevel) * Math.min(1, dt*3);
+
+    drawNightSky(nightLevel, now); drawMoon(nightLevel);
+    updateShooters(dt, nightLevel); drawShooters(nightLevel);
+    updateFireworks(dt, discoLevel); drawFireworks(discoLevel);
+
+    layout();
+    heads.forEach(h=>{ h.phase += dt*1.6*vibeByName(h.vibe).speed; h.blinkT += dt;
+      if(h.bangT > 0) h.bangT -= dt;
+      if(h.grow < 1) h.grow = Math.min(1, h.grow + dt*4);
+      if(h.blinking>0){ h.blinking -= dt; } else if(h.blinkT > h.blink){ h.blinking = 0.12; h.blinkT = 0; h.blink = 2+Math.random()*4; } });
+
+    // ---- spring physics: each head eases toward its layout target; a grabbed head
+    // is pinned to the pointer and flings back with an elastic overshoot on release.
+    const K = 150, DAMP = 7, SUB = 3, hdt = dt/SUB, VMAX = 700;
+    // a brand-new head starts at the body anchor, so the spring grows its neck out of the body
+    for(const h of heads){ if(!isFinite(h.px)){ h.px = h.anchorX; h.py = h.anchorY; h.vx = 0; h.vy = 0; } }
+    if(dragged){
+      const gx = Math.max(-3, Math.min(GW+3, dragX)), gy = Math.max(-3, Math.min(GH+3, dragY));
+      dragged.vx = Math.max(-VMAX, Math.min(VMAX, (gx - dragged.px)/Math.max(dt, 0.001)));
+      dragged.vy = Math.max(-VMAX, Math.min(VMAX, (gy - dragged.py)/Math.max(dt, 0.001)));
+      dragged.px = gx; dragged.py = gy;
+    }
+    for(let st=0; st<SUB; st++){
+      for(const h of heads){ if(h === dragged) continue;
+        const ax = (h.hx - h.px)*K - h.vx*DAMP;
+        const ay = (h.hy - h.py)*K - h.vy*DAMP;
+        h.vx = Math.max(-VMAX, Math.min(VMAX, h.vx + ax*hdt));
+        h.vy = Math.max(-VMAX, Math.min(VMAX, h.vy + ay*hdt));
+        h.px += h.vx*hdt; h.py += h.vy*hdt;
+      }
+    }
+
+    drawBody();
+    heads.forEach((h,i)=> drawNeck(h.anchorX, h.anchorY-1, h, i));
+    heads.forEach((h,i)=> drawHead(Math.round(h.px), Math.round(h.py), h, h.big, i));
+
+    if(heads.length){
+      let c = heads.reduce((a,b)=> (a.py<=b.py? a:b)); const ci = heads.indexOf(c);
+      const cx = Math.round(c.px), cy = Math.round(c.py) - (c.big?4:3); const sc = headColors(c, ci)[0];
+      rect(cx,cy-1,cx,cy+1,sc); px(cx-1,cy,sc); px(cx+1,cy,sc); px(cx-1,cy-1,sc); px(cx+1,cy-1,sc);
+    }
+
+    updatePuffs(dt); drawPuffs();
+
+    const tms = now/600;
+    [[8,12],[GW-8,16],[12,26],[GW-12,30]].forEach((s,k)=>{ if((Math.sin(tms+k)*0.5+0.5) > 0.4) pxa(s[0], s[1], COL.spark, 1 - nightLevel*0.7); });
+    requestAnimationFrame(frame);
+  }
+
+  function setVibe(name, silent){
+    const i = VIBES.findIndex(v=>v.name===name); if(i < 0) return false;
+    const prev = VIBES[vibeIdx].name; vibeIdx = i; updateVibeBar();
+    heads.forEach(h=> h.vibe = name);   // global vibe = every head the same
+    if(!silent && prev !== name){ emit('vibe', { vibe:name, prev }); emit('change', snapshot()); }
+    return true;
+  }
+
+  // Per-head vibes: one entry per head/agent. Adjusts head count to match the
+  // array length, then assigns each head its own vibe — so a single sleeping
+  // agent droops just its own head while its siblings keep working.
+  function setHeadVibes(arr, silent){
+    if(!Array.isArray(arr) || arr.length === 0) return snapshot();
+    const n = Math.max(1, Math.min(18, arr.length));
+    if(n !== heads.length) setHeads(n, true);
+    const counts = {};
+    heads.forEach((h,i)=>{ const name = VIBE_BY_NAME[arr[i]] ? arr[i] : 'chill'; h.vibe = name; counts[name] = (counts[name]||0)+1; });
+    // pick the most common vibe as the representative for snapshot/getVibe + control highlight
+    let rep = heads[0].vibe, best = 0;
+    for(const k in counts){ if(counts[k] > best){ best = counts[k]; rep = k; } }
+    const ri = VIBES.findIndex(v=>v.name===rep); if(ri >= 0){ vibeIdx = ri; updateVibeBar(); }
+    if(!silent) emit('change', snapshot());
+    return snapshot();
+  }
+
+  // ---- public API ----
+  window.hydra = {
+    // setters
+    addHead: ()=> setHeads(heads.length+1),
+    removeHead: ()=> setHeads(heads.length-1),
+    setHeads: (n)=> setHeads(n),
+    setVibe: (name)=> setVibe(name),
+    setHeadVibes: (arr)=> setHeadVibes(arr),
+    // throw a fireworks party for `secs` seconds (used when a task completes)
+    celebrate: (secs)=>{ celebrateT = Math.max(celebrateT, (+secs)||3); for(let i=0;i<8;i++) spawnRocket(); return true; },
+    setState: (s={})=>{ if(Array.isArray(s.headVibes)) setHeadVibes(s.headVibes,true); else if(typeof s.vibe==='string') setVibe(s.vibe,true); if(s.count!=null) setHeads(s.count,true); emit('change', snapshot()); return snapshot(); },
+    // getters
+    count: ()=> heads.length,
+    getVibe: ()=> VIBES[vibeIdx].name,
+    getVibeIndex: ()=> vibeIdx,
+    listVibes: ()=> VIBES.map(v=>v.name),
+    getEndpoints: ()=> endpoints(),
+    getState: ()=> snapshot(),
+    // events: on() returns an unsubscribe fn; types: 'change' | 'head' | 'vibe'
+    on: (type, cb)=>{ (listeners[type]||(listeners[type]=[])).push(cb); return ()=> window.hydra.off(type, cb); },
+    off: (type, cb)=>{ const a=listeners[type]; if(a){ const j=a.indexOf(cb); if(j>=0) a.splice(j,1); } }
+  };
+
+  // ---- postMessage bridge (for iframe embeds) ----
+  // parent -> widget: { source:'hydra-cmd', cmd:'setVibe'|'setHeads'|'addHead'|'removeHead'|'setState'|'getState'|..., arg }
+  // widget -> parent: { source:'hydra', type:'change'|'reply', ... }
+  window.addEventListener('message', (ev)=>{
+    const m = ev.data; if(!m || m.source !== 'hydra-cmd') return;
+    const fn = window.hydra[m.cmd];
+    if(typeof fn === 'function'){ const r = fn(m.arg);
+      try{ ev.source && ev.source.postMessage({ source:'hydra', type:'reply', cmd:m.cmd, result:(r!==undefined?r:snapshot()) }, '*'); }catch(e){} }
+  });
+
+  const vibebar = document.getElementById('vibebar');
+  function updateVibeBar(){
+    [...vibebar.children].forEach((b,i)=>{ b.classList.toggle('active', i===vibeIdx); });
+  }
+  VIBES.forEach((v,i)=>{ const b = document.createElement('button');
+    b.textContent = v.name; b.onclick = ()=> setVibe(v.name); vibebar.appendChild(b); });
+
+  document.getElementById('grow').onclick = ()=> setHeads(heads.length+1);
+  document.getElementById('cut').onclick  = ()=> setHeads(heads.length-1);
+  document.getElementById('n').oninput = (e)=> setHeads(+e.target.value);
+
+  // ---- drag interaction: grab a head, stretch its neck like an elastic band,
+  // release to spring back. Works with mouse and touch. ----
+  function evtGrid(e){
+    const r = cv.getBoundingClientRect();
+    const src = (e.touches && e.touches[0]) ? e.touches[0] : e;
+    return { gx: (src.clientX - r.left) * (cv.width / r.width) / P,
+             gy: (src.clientY - r.top)  * (cv.height / r.height) / P };
+  }
+  function grabAt(gx, gy){
+    let best = null, bd = 1e9;
+    heads.forEach(h=>{ const d = Math.hypot(h.px - gx, h.py - gy); if(d < bd){ bd = d; best = h; } });
+    return (best && bd < 5.5) ? best : null;   // within ~one head radius
+  }
+  function inBody(gx, gy){ return gx >= body.x0-1 && gx <= body.x1+1 && gy >= body.y0-1 && gy <= body.y1+2; }
+  function startDrag(e){
+    const { gx, gy } = evtGrid(e); const h = grabAt(gx, gy);
+    if(h){ dragged = h; h.dragging = true; dragX = downX = gx; dragY = downY = gy; cv.style.cursor = 'grabbing'; e.preventDefault(); return; }
+    if(inBody(gx, gy)){ bodyArmed = true; downX = gx; downY = gy; e.preventDefault(); }  // click the body -> whole-hydra hop
+  }
+  function moveDrag(e){
+    if(dragged){ const { gx, gy } = evtGrid(e); dragX = gx; dragY = gy; e.preventDefault(); return; }
+    const { gx, gy } = evtGrid(e);
+    if(bodyArmed && Math.hypot(gx - downX, gy - downY) > 2) bodyArmed = false;   // it was a drag on empty space, not a tap
+    cv.style.cursor = grabAt(gx, gy) ? 'grab' : (inBody(gx, gy) ? 'pointer' : 'default');
+  }
+  function endDrag(){
+    if(dragged){
+      if(Math.hypot(dragX - downX, dragY - downY) < 1.2){   // barely moved => a click, not a drag: that head jumps!
+        dragged.vy = -JUMP; dragged.vx = (Math.random()-0.5)*12; dragged.bangT = 0.45;
+      }
+      dragged.dragging = false; dragged = null; cv.style.cursor = 'default'; return;
+    }
+    if(bodyArmed){   // tapped the main body -> every head springs up at once
+      bodyArmed = false;
+      heads.forEach(h=>{ h.vy = -JUMP*0.75; h.vx = (Math.random()-0.5)*8; h.bangT = 0.4; });
+    }
+  }
+
+  cv.addEventListener('mousedown', startDrag);
+  window.addEventListener('mousemove', moveDrag);
+  window.addEventListener('mouseup', endDrag);
+  cv.addEventListener('touchstart', startDrag, { passive:false });
+  window.addEventListener('touchmove', moveDrag, { passive:false });
+  window.addEventListener('touchend', endDrag);
+
+  // Embed mode: when the dashboard hosts this in an iframe (?embed), hide the
+  // manual controls — the fleet poll loop drives setState() instead.
+  if(/[?&]embed\b/.test(location.search)) document.body.classList.add('embed');
+
+  setHeads(5, true);
+  setVibe('chill', true);
+
+  // Inspection URL params (standalone, non-embed):
+  //   ?showcase   -> one head per vibe, so you can see every agent mode at once
+  //   ?vibe=NAME  -> force all heads to one vibe (e.g. ?vibe=sleepy for the full night sky)
+  const params = new URLSearchParams(location.search);
+  if(params.has('showcase')){ setHeads(VIBES.length, true); setHeadVibes(VIBES.map(v=>v.name), true); }
+  else if(params.get('vibe') && VIBE_BY_NAME[params.get('vibe')]){ setVibe(params.get('vibe'), true); }
+
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

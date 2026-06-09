@@ -301,6 +301,10 @@ export function startServer(opts: ServerOptions): http.Server {
         const html = await readFile(path.join(WEB_DIR, "branches.html"), "utf8");
         return send(res, 200, "text/html; charset=utf-8", html);
       }
+      if (url.pathname === "/hydra" || url.pathname === "/hydra.html") {
+        const html = await readFile(path.join(WEB_DIR, "hydra.html"), "utf8");
+        return send(res, 200, "text/html; charset=utf-8", html);
+      }
       send(res, 404, "text/plain", "not found");
     } catch (err) {
       send(res, 500, "text/plain", String(err));
