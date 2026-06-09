@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir, readdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import type { ConflictResolver } from "./resolver.js";
 
@@ -41,6 +41,11 @@ export class CheckpointManager {
     } catch {
       return undefined;
     }
+  }
+
+  /** Delete a branch's checkpoint file, if present. */
+  async remove(branch: string): Promise<void> {
+    await rm(this.fileFor(branch), { force: true });
   }
 
   async list(): Promise<Checkpoint[]> {

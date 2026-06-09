@@ -28,8 +28,9 @@ export interface FleetStatus {
   integration: IntegrationState | null;
   /** Per-branch interaction state (paused + queued message count). */
   inbox: Record<string, { paused: boolean; count: number }>;
-  /** Primary working tree (repo root): current branch + uncommitted-change count. */
-  repo: { branch: string; dirty: boolean; changes: number };
+  /** Primary working tree (repo root): current branch, the trunk to return to,
+   *  and uncommitted-change count. */
+  repo: { branch: string; mainBranch: string; dirty: boolean; changes: number };
 }
 
 export interface FleetStatusPaths {
@@ -60,7 +61,13 @@ export async function readFleetStatus(repoRoot: string, paths: FleetStatusPaths 
 
   const inboxes = new InboxManager(repoRoot);
   const git = new Git(repoRoot);
-  const mainRef = (await git.tryRun(["rev-parse", "--verify", "--quiet", "main"])).code === 0 ? "main" : "HEAD";
+  const currentBranch = (await git.tryRun(["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim() || "HEAD";
+  // Resolve the integration trunk: main, else master, else whatever's checked out.
+  const mainBranch = (await git.tryRun(["rev-parse", "--verify", "--quiet", "main"])).code === 0
+    ? "main"
+    : (await git.tryRun(["rev-parse", "--verify", "--quiet", "master"])).code === 0
+      ? "master"
+      : currentBranch;
   const inbox: Record<string, { paused: boolean; count: number }> = {};
   const workers: WorkerStatus[] = [];
   for (const w of registry.all()) {
@@ -70,13 +77,12 @@ export async function readFleetStatus(repoRoot: string, paths: FleetStatusPaths 
     const lastActivityAt = w.state === "running" ? await latestActivityAt(repoRoot, w.branch) : null;
     // Whether this branch has already landed in main (Extend is then disabled).
     const merged = w.head
-      ? (await git.tryRun(["merge-base", "--is-ancestor", w.head, mainRef])).code === 0
+      ? (await git.tryRun(["merge-base", "--is-ancestor", w.head, mainBranch])).code === 0
       : false;
     workers.push({ ...w, ...(lastActivityAt ? { lastActivityAt } : {}), merged });
   }
 
-  // Primary working tree state — drives the per-worker checkout button.
-  const currentBranch = (await git.tryRun(["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim() || "HEAD";
+  // Primary working tree state — drives the checkout buttons.
   const porcelain = (await git.tryRun(["status", "--porcelain"])).stdout;
   const changes = porcelain.split("\n").filter((l) => l.trim()).length;
 
@@ -88,6 +94,6 @@ export async function readFleetStatus(repoRoot: string, paths: FleetStatusPaths 
     checkpoints: await cpm.list(),
     integration,
     inbox,
-    repo: { branch: currentBranch, dirty: changes > 0, changes },
+    repo: { branch: currentBranch, mainBranch, dirty: changes > 0, changes },
   };
 }

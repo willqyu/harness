@@ -10,7 +10,16 @@ import { readAgentLog, listAgentSessions, readSessionLog } from "./transcript.js
 import { readBranchLog } from "./branches.js";
 import { InboxManager, type InboxKind } from "./inbox.js";
 import { Registry } from "./registry.js";
+import { CheckpointManager } from "./checkpoint.js";
+import { WorktreeManager } from "./worktree.js";
 import { Git } from "./git.js";
+
+/** Resolve the integration trunk: main, else master, else the current branch. */
+async function resolveMain(git: Git): Promise<string> {
+  if ((await git.tryRun(["rev-parse", "--verify", "--quiet", "main"])).code === 0) return "main";
+  if ((await git.tryRun(["rev-parse", "--verify", "--quiet", "master"])).code === 0) return "master";
+  return (await git.tryRun(["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim() || "HEAD";
+}
 
 export interface ServerOptions {
   repoRoot: string;
@@ -145,8 +154,8 @@ export function startServer(opts: ServerOptions): http.Server {
         const entry = reg.all().find((e) => e.branch === b);
         // Too late to extend once the branch has landed in main.
         const git = new Git(opts.repoRoot);
-        const mainRef = (await git.tryRun(["rev-parse", "--verify", "--quiet", "main"])).code === 0 ? "main" : "HEAD";
-        if (entry?.head && (await git.tryRun(["merge-base", "--is-ancestor", entry.head, mainRef])).code === 0) {
+        const mainBranch = await resolveMain(git);
+        if (entry?.head && (await git.tryRun(["merge-base", "--is-ancestor", entry.head, mainBranch])).code === 0) {
           return send(res, 409, "application/json", '{"error":"branch already integrated into main — spawn a new task instead"}');
         }
         if (entry?.state === "running") {
@@ -154,6 +163,17 @@ export function startServer(opts: ServerOptions): http.Server {
           await inbox.post(b, { kind: "inject", text: String(text), from: "dashboard" });
           log(`extend → ${b}: injected to running worker`);
           return send(res, 200, "application/json", JSON.stringify({ ok: true, mode: "injected" }));
+        }
+        // If this branch is checked out in the main working tree, free it first —
+        // a continuation worker can't `git worktree add` a branch already checked
+        // out elsewhere (this was the silent extend failure).
+        const cur = (await git.tryRun(["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim();
+        if (cur === b) {
+          if ((await git.tryRun(["status", "--porcelain"])).stdout.trim()) {
+            return send(res, 409, "application/json", '{"error":"this branch is checked out with uncommitted changes — commit or stash them first"}');
+          }
+          await git.tryRun(["checkout", mainBranch]);
+          log(`extend → ${b}: freed it from the working tree (checked out ${mainBranch})`);
         }
         // Terminal but un-integrated: continue it with a seeded follow-up worker.
         const request = { description: String(text), continueFrom: b, mode: "single" };
@@ -179,6 +199,38 @@ export function startServer(opts: ServerOptions): http.Server {
           return send(res, 409, "application/json", JSON.stringify({ error: r.stderr.trim() || `could not checkout ${b}` }));
         }
         log(`checkout → working tree now on ${b}`);
+        return send(res, 200, "application/json", JSON.stringify({ ok: true, branch: b }));
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/delete-branch") {
+        const body = await readBody(req);
+        const { branch } = JSON.parse(body || "{}");
+        const b = sanitizeBranch(branch);
+        if (!b) return send(res, 400, "application/json", '{"error":"branch required"}');
+        const git = new Git(opts.repoRoot);
+        const mainBranch = await resolveMain(git);
+        if (b === mainBranch) {
+          return send(res, 400, "application/json", '{"error":"refusing to delete the trunk branch"}');
+        }
+        const reg = await Registry.open(path.join(opts.repoRoot, ".harness", "registry.json"));
+        const entry = reg.all().find((e) => e.branch === b);
+        if (entry?.state === "running") {
+          return send(res, 409, "application/json", '{"error":"a worker is still running on this branch — let it finish first"}');
+        }
+        const cur = (await git.tryRun(["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim();
+        if (cur === b) {
+          return send(res, 409, "application/json", '{"error":"branch is checked out in the working tree — switch to main first"}');
+        }
+        // Remove its worktree (if any), delete the branch, then clean up state.
+        await new WorktreeManager(opts.repoRoot, path.join(opts.repoRoot, ".harness", "worktrees"))
+          .remove(b, { force: true }).catch(() => {});
+        const del = await git.tryRun(["branch", "-D", b]);
+        if (del.code !== 0) {
+          return send(res, 409, "application/json", JSON.stringify({ error: del.stderr.trim() || `could not delete ${b}` }));
+        }
+        await reg.remove(b);
+        await new CheckpointManager(path.join(opts.repoRoot, ".harness", "checkpoints")).remove(b);
+        log(`deleted branch ${b}`);
         return send(res, 200, "application/json", JSON.stringify({ ok: true, branch: b }));
       }
 

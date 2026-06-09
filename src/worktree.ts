@@ -34,12 +34,18 @@ export class WorktreeManager {
   }
 
   /** Create a worktree that checks out an EXISTING branch (commits stack onto
-   *  it). Used to continue an un-integrated branch in place. */
+   *  it). Used to continue an un-integrated branch in place. Falls back to
+   *  --force when the branch is already checked out in another worktree. */
   async addExisting(branch: string): Promise<string> {
     await mkdir(this.baseDir, { recursive: true });
     const wt = this.pathFor(branch);
     await this.remove(branch, { force: true }).catch(() => {}); // clear any stale worktree
-    await this.git.run(["worktree", "add", wt, branch]);
+    const r = await this.git.tryRun(["worktree", "add", wt, branch]);
+    if (r.code !== 0) {
+      // Branch may be checked out elsewhere (e.g. the user checked it into the
+      // main tree). Force a second checkout so the continuation can proceed.
+      await this.git.run(["worktree", "add", "--force", wt, branch]);
+    }
     return wt;
   }
 

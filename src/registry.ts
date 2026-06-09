@@ -57,6 +57,13 @@ export class Registry {
     await this.flush();
   }
 
+  /** Drop a branch's entry (e.g. after deleting an invalid branch). */
+  async remove(branch: string): Promise<boolean> {
+    const had = this.entries.delete(branch);
+    if (had) await this.flush();
+    return had;
+  }
+
   private async flush(): Promise<void> {
     await mkdir(path.dirname(this.file), { recursive: true });
     await writeFile(this.file, JSON.stringify(this.all(), null, 2), "utf8");

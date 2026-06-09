@@ -19,7 +19,7 @@
       ::-webkit-scrollbar { width: 10px; height: 10px; }
       ::-webkit-scrollbar-track { background: transparent; }
       ::-webkit-scrollbar-thumb {
-        background: #30363d; border-radius: 8px;
+        background: #30363d; border-radius: 0;
         border: 2px solid transparent; background-clip: padding-box;
       }
       ::-webkit-scrollbar-thumb:hover { background: #4b545f; background-clip: padding-box; }
@@ -35,7 +35,7 @@
       main { padding: 24px; display: grid; gap: 16px; max-width: 1100px; margin: 0 auto; }
       .empty { padding: 16px; color: var(--muted); }
       .badge {
-        display: inline-block; padding: 1px 8px; border-radius: 10px;
+        display: inline-block; padding: 1px 8px; border-radius: 0;
         font-size: 11px; font-weight: 700; text-transform: uppercase;
       }
       .s-completed, .s-merged, .s-landed { background: rgba(63,185,80,.15); color: var(--ok); }
@@ -44,7 +44,7 @@
       .s-pending, .s-open { background: rgba(110,118,129,.2); color: var(--pending); }
       .sha { color: var(--accent); }
       .muted { color: var(--muted); }
-      .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
+      .card { background: var(--panel); border: 1px solid var(--border); border-radius: 0; }
       .card.failed { border-color: rgba(248,81,73,.5); }
       .row {
         display: flex; align-items: center; gap: 10px; padding: 12px 16px;
@@ -65,7 +65,7 @@
       .detail section:last-child { margin-bottom: 0; }
       .brief, .context {
         white-space: pre-wrap; word-break: break-word; font-size: 12px;
-        background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+        background: var(--bg); border: 1px solid var(--border); border-radius: 0;
         padding: 10px 12px; max-height: 280px; overflow: auto;
       }
       .commits { display: grid; gap: 4px; }

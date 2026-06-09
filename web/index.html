@@ -20,7 +20,7 @@
       ::-webkit-scrollbar { width: 10px; height: 10px; }
       ::-webkit-scrollbar-track { background: transparent; }
       ::-webkit-scrollbar-thumb {
-        background: #30363d; border-radius: 8px;
+        background: #30363d; border-radius: 0;
         border: 2px solid transparent; background-clip: padding-box;
       }
       ::-webkit-scrollbar-thumb:hover { background: #4b545f; background-clip: padding-box; }
@@ -44,7 +44,7 @@
         main { flex-direction: column; }
         .col-side { flex: 1 1 auto; width: 100%; position: static; }
       }
-      .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
+      .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 0; }
       .panel h2 {
         font-size: 12px; text-transform: uppercase; letter-spacing: 1px;
         color: var(--muted); margin: 0; padding: 12px 16px; border-bottom: 1px solid var(--border);
@@ -62,7 +62,7 @@
       tr:last-child td { border-bottom: none; }
       .empty { padding: 16px; color: var(--muted); }
       .badge {
-        display: inline-block; padding: 1px 8px; border-radius: 10px;
+        display: inline-block; padding: 1px 8px; border-radius: 0;
         font-size: 11px; font-weight: 700; text-transform: uppercase;
       }
       .s-completed, .s-merged, .s-resolved, .s-true { background: rgba(63,185,80,.15); color: var(--ok); }
@@ -85,12 +85,12 @@
       .ctrl { display: flex; gap: 6px; align-items: center; }
       .ctrl input {
         flex: 1; min-width: 120px; background: var(--bg); color: var(--fg);
-        border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px;
+        border: 1px solid var(--border); border-radius: 0; padding: 4px 8px;
         font: inherit; font-size: 12px;
       }
       .ctrl button {
         background: var(--bg); color: var(--fg); border: 1px solid var(--border);
-        border-radius: 6px; padding: 4px 10px; font: inherit; font-size: 12px; cursor: pointer;
+        border-radius: 0; padding: 4px 10px; font: inherit; font-size: 12px; cursor: pointer;
       }
       .ctrl button:hover { border-color: var(--accent); color: var(--accent); }
       .ctrl button.paused { color: var(--run); border-color: var(--run); }
@@ -134,20 +134,27 @@
       .action-bar { display: flex; gap: 8px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
       .action-bar input, .action-bar select, .spawn textarea {
         background: var(--bg); color: var(--fg); border: 1px solid var(--border);
-        border-radius: 6px; padding: 6px 10px; font: inherit; font-size: 12px;
+        border-radius: 0; padding: 6px 10px; font: inherit; font-size: 12px;
       }
       .action-bar input { flex: 1; min-width: 160px; }
       .action-bar select { cursor: pointer; max-width: 220px; }
       .ctrl button[data-act="extend"]:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+      .ctrl button.danger:not(:disabled) { border-color: var(--fail); color: var(--fail); }
+      .ctrl button.danger:hover:not(:disabled) { background: rgba(248,81,73,.12); }
       .ctrl button:disabled { opacity: 0.4; cursor: default; }
+      .modal-actions button.danger { border-color: var(--fail); color: var(--fail); }
+      .modal-actions button.danger:hover:not(:disabled) { background: rgba(248,81,73,.12); }
       /* Working-tree status bar atop the Workers pane. */
       .repobar { padding: 8px 16px; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--border); }
       .repobar.dirty { color: var(--run); background: rgba(210,153,34,.08); }
       .repobar button {
         background: var(--bg); color: var(--run); border: 1px solid var(--run);
-        border-radius: 6px; padding: 2px 10px; margin: 0 2px; font: inherit; font-size: 11px; cursor: pointer;
+        border-radius: 0; padding: 2px 10px; margin: 0 2px; font: inherit; font-size: 11px; cursor: pointer;
       }
-      .repobar button:hover { background: rgba(210,153,34,.15); }
+      .repobar button:hover:not(:disabled) { background: rgba(210,153,34,.15); }
+      .repobar button[data-act="checkout-main"] { color: var(--accent); border-color: var(--accent); }
+      .repobar button[data-act="checkout-main"]:hover:not(:disabled) { background: rgba(88,166,255,.12); }
+      .repobar button:disabled { opacity: 0.45; cursor: default; }
       .s-current { background: rgba(63,185,80,.15); color: var(--ok); margin-left: 6px; }
       /* Extend modal */
       .modal-overlay {
@@ -156,27 +163,27 @@
       }
       .modal-overlay[hidden] { display: none; }
       .modal {
-        background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+        background: var(--panel); border: 1px solid var(--border); border-radius: 0;
         width: min(560px, 92vw); padding: 18px 20px; box-shadow: 0 16px 48px rgba(1,4,9,.6);
       }
       .modal h3 { margin: 0 0 4px; font-size: 14px; }
       .modal .hint { color: var(--muted); font-size: 11px; margin: 0 0 12px; }
       .modal textarea {
         width: 100%; background: var(--bg); color: var(--fg); border: 1px solid var(--border);
-        border-radius: 6px; padding: 8px 10px; font: inherit; font-size: 13px; resize: vertical; line-height: 1.5;
+        border-radius: 0; padding: 8px 10px; font: inherit; font-size: 13px; resize: vertical; line-height: 1.5;
       }
       .modal-actions { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
       .modal-actions .spacer { margin-left: auto; }
       .modal-actions button {
         background: var(--bg); color: var(--fg); border: 1px solid var(--border);
-        border-radius: 6px; padding: 6px 16px; font: inherit; font-size: 12px; cursor: pointer;
+        border-radius: 0; padding: 6px 16px; font: inherit; font-size: 12px; cursor: pointer;
       }
       .modal-actions button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
       #modal-submit { border-color: var(--accent); color: var(--accent); }
       .modal-actions button:disabled { opacity: 0.5; cursor: default; }
       .action-bar button {
         background: var(--bg); color: var(--fg); border: 1px solid var(--border);
-        border-radius: 6px; padding: 6px 14px; font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap;
+        border-radius: 0; padding: 6px 14px; font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap;
       }
       .action-bar button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
       .action-bar button:disabled { opacity: 0.5; cursor: default; }
@@ -184,7 +191,7 @@
       .spawn { padding: 12px 16px; display: grid; gap: 10px; }
       .spawn textarea { width: 100%; resize: vertical; line-height: 1.5; }
       .rec {
-        margin: 12px 16px 0; padding: 10px 12px; border-radius: 6px;
+        margin: 12px 16px 0; padding: 10px 12px; border-radius: 0;
         background: rgba(63,185,80,.12); border: 1px solid rgba(63,185,80,.45); color: var(--ok);
         font-size: 12px; display: flex; align-items: center; gap: 8px;
       }
@@ -300,29 +307,42 @@
           : `<button data-act="extend" title="extend this task before it's integrated">Extend</button>`;
         // Switch the primary working tree to this branch — only from a clean tree,
         // and not while the branch is busy in its own worker worktree.
+        const isCurrent = repo && repo.branch === w.branch;
         let checkout;
-        if (repo && repo.branch === w.branch) checkout = `<button disabled title="working tree is already on this branch">✓ on tree</button>`;
+        if (isCurrent) checkout = `<button disabled title="working tree is already on this branch">✓ on tree</button>`;
         else if (w.state === "running") checkout = `<button disabled title="branch is checked out in its worker worktree">Checkout</button>`;
         else if (repo && repo.dirty) checkout = `<button disabled title="stash or commit changes first">Checkout</button>`;
         else checkout = `<button data-act="checkout" title="switch the working tree to this branch">Checkout</button>`;
+        // Delete a failed/invalid branch (and its worktree + checkpoint). Not
+        // offered once the branch is merged — its work already lives in main.
+        let del;
+        if (w.merged) del = "";
+        else if (w.state === "running") del = `<button disabled title="stop the running worker before deleting">Delete</button>`;
+        else if (isCurrent) del = `<button disabled title="checked out in the working tree — switch to main first">Delete</button>`;
+        else del = `<button data-act="delete" class="danger" title="delete this branch (for failed or invalid work)">Delete</button>`;
         if (w.state !== "running") {
-          return `<div class="ctrl" data-branch="${b}">${extend}${checkout}</div>`;
+          return `<div class="ctrl" data-branch="${b}">${extend}${checkout}${del}</div>`;
         }
         const paused = inbox && inbox[w.branch] && inbox[w.branch].paused;
         return `<div class="ctrl" data-branch="${b}">
             <input type="text" placeholder="message this agent…" data-role="inject-text" />
             <button data-act="inject">Send</button>
             <button data-act="${paused ? "resume" : "pause"}" class="${paused ? "paused" : ""}">${paused ? "Resume" : "Pause"}</button>
-            ${extend}${checkout}
+            ${extend}${checkout}${del}
           </div>`;
       }
 
       function renderRepoBar(repo) {
         if (!repo) return "";
+        const main = repo.mainBranch;
+        // "Checkout main" — hidden when already on it, disabled when the tree is dirty.
+        const coMain = (main && repo.branch !== main)
+          ? `<button data-act="checkout-main" data-branch="${esc(main)}" ${repo.dirty ? 'disabled title="stash or commit changes first"' : `title="switch the working tree to ${esc(main)}"`}>Checkout ${esc(main)}</button>`
+          : "";
         if (repo.dirty) {
-          return `<div class="repobar dirty">⚠ working tree on <span class="sha">${esc(repo.branch)}</span> has <b>${repo.changes}</b> uncommitted change${repo.changes !== 1 ? "s" : ""} — checkout disabled until you <button data-act="stash">Stash all</button> or commit them.</div>`;
+          return `<div class="repobar dirty">⚠ working tree on <span class="sha">${esc(repo.branch)}</span> has <b>${repo.changes}</b> uncommitted change${repo.changes !== 1 ? "s" : ""} — checkout disabled until you <button data-act="stash">Stash all</button> or commit them. ${coMain}</div>`;
         }
-        return `<div class="repobar">working tree on <span class="sha">${esc(repo.branch)}</span> · clean</div>`;
+        return `<div class="repobar">working tree on <span class="sha">${esc(repo.branch)}</span> · clean ${coMain}</div>`;
       }
 
       // Expanded transcript panels (per branch) + their accumulated state.
@@ -510,6 +530,8 @@
           openExtendModal(branch, btn.closest("tr"));
         } else if (act === "checkout") {
           doCheckout(branch);
+        } else if (act === "delete") {
+          openDeleteModal(branch);
         } else {
           postJSON("/api/control", { branch, action: act });
         }
@@ -538,45 +560,78 @@
         }
       });
 
-      // Extend modal: steers a running worker in place, or continues a finished
-      // (un-integrated) branch on the SAME branch. The backend chooses which.
-      let extendBranch = null;
-      function openExtendModal(branch, row) {
-        extendBranch = branch;
-        const running = row && /s-running/.test(row.innerHTML);
-        $("modal-title").textContent = `Extend "${branch}"`;
-        $("modal-hint").textContent = running
-          ? "This worker is running — your message is delivered to it live."
-          : "This branch is finished but not yet integrated — a worker continues it in place, stacking new commits on the same branch.";
-        $("modal-text").value = "";
+      // Repo-bar "Checkout main" button (carries the trunk name in data-branch).
+      document.addEventListener("click", (ev) => {
+        const b = ev.target.closest('[data-act="checkout-main"]');
+        if (b) doCheckout(b.dataset.branch);
+      });
+
+      // Generic modal — drives both the Extend (textarea) and Delete (confirm)
+      // dialogs. onSubmit(text) runs the action; throwing shows the error inline.
+      let modalSubmit = null;
+      function openModal(opts) {
+        modalSubmit = opts.onSubmit;
+        $("modal-title").textContent = opts.title;
+        $("modal-hint").textContent = opts.hint || "";
+        const ta = $("modal-text");
+        ta.hidden = !opts.withText;
+        ta.value = "";
+        const sub = $("modal-submit");
+        sub.textContent = opts.submitLabel || "OK";
+        sub.classList.toggle("danger", !!opts.danger);
+        sub.disabled = false;
         $("modal-msg").textContent = "";
-        $("modal-submit").disabled = false;
         $("modal-overlay").hidden = false;
-        $("modal-text").focus();
+        if (opts.withText) ta.focus(); else sub.focus();
       }
-      function closeExtendModal() { $("modal-overlay").hidden = true; extendBranch = null; }
-      async function submitExtend() {
-        const text = $("modal-text").value.trim();
-        if (!text) { $("modal-msg").textContent = "enter an instruction"; return; }
-        const branch = extendBranch;
-        $("modal-submit").disabled = true; $("modal-msg").textContent = "sending…";
+      function closeModal() { $("modal-overlay").hidden = true; modalSubmit = null; }
+      async function runModalSubmit() {
+        if (!modalSubmit) return;
+        $("modal-submit").disabled = true; $("modal-msg").textContent = "working…";
         try {
-          const j = await api("/api/extend", { branch, text });
-          closeExtendModal();
-          $("spawn-msg").textContent = j.mode === "injected" ? `✓ steered ${branch}` : `✓ continuing ${branch}`;
-          setTimeout(tick, 800);
+          await modalSubmit($("modal-text").value.trim());
+          closeModal();
+          setTimeout(tick, 400);
         } catch (e) {
           $("modal-msg").textContent = "✗ " + e.message;
           $("modal-submit").disabled = false;
         }
       }
-      $("modal-cancel").addEventListener("click", closeExtendModal);
-      $("modal-submit").addEventListener("click", submitExtend);
-      $("modal-overlay").addEventListener("click", (e) => { if (e.target.id === "modal-overlay") closeExtendModal(); });
+
+      function openExtendModal(branch, row) {
+        const running = row && /s-running/.test(row.innerHTML);
+        openModal({
+          title: `Extend "${branch}"`,
+          hint: running
+            ? "This worker is running — your message is delivered to it live."
+            : "This branch is finished but not yet integrated — a worker continues it in place, stacking new commits on the same branch.",
+          withText: true, submitLabel: "Extend",
+          onSubmit: async (text) => {
+            if (!text) throw new Error("enter an instruction");
+            const j = await api("/api/extend", { branch, text });
+            $("spawn-msg").textContent = j.mode === "injected" ? `✓ steered ${branch}` : `✓ continuing ${branch}`;
+          },
+        });
+      }
+      function openDeleteModal(branch) {
+        openModal({
+          title: `Delete branch "${branch}"?`,
+          hint: "Permanently deletes this branch, its worktree, and its checkpoint — for a failed or invalid branch. This cannot be undone.",
+          withText: false, submitLabel: "Delete branch", danger: true,
+          onSubmit: async () => {
+            await api("/api/delete-branch", { branch });
+            $("spawn-msg").textContent = `✓ deleted ${branch}`;
+          },
+        });
+      }
+      $("modal-cancel").addEventListener("click", closeModal);
+      $("modal-submit").addEventListener("click", runModalSubmit);
+      $("modal-overlay").addEventListener("click", (e) => { if (e.target.id === "modal-overlay") closeModal(); });
       $("modal-text").addEventListener("keydown", (e) => {
-        if (e.key === "Escape") closeExtendModal();
-        else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submitExtend();
+        if (e.key === "Escape") closeModal();
+        else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) runModalSubmit();
       });
+      document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("modal-overlay").hidden) closeModal(); });
       document.addEventListener("keydown", (ev) => {
         if (ev.key !== "Enter") return;
         const input = ev.target.closest('[data-role="inject-text"]');
