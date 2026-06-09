@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { defaultClaudeBin, shouldUseShell } from "./claude.js";
 import { InboxManager } from "./inbox.js";
 import { HarnessEvents } from "./events.js";
 import type { WorkerContext, WorkerResult, WorkerRunner } from "./types.js";
@@ -63,7 +64,7 @@ export class StreamingClaudeAgentRunner implements WorkerRunner {
   constructor(private readonly opts: StreamingClaudeAgentRunnerOptions = {}) {}
 
   async run(ctx: WorkerContext): Promise<WorkerResult> {
-    const bin = this.opts.bin ?? (process.platform === "win32" ? "claude.cmd" : "claude");
+    const bin = this.opts.bin ?? defaultClaudeBin();
     const args = this.opts.args ?? DEFAULT_ARGS;
     const format = this.opts.formatMessage ?? defaultFormat;
     const prompt = (this.opts.buildPrompt ?? defaultPrompt)(ctx);
@@ -74,7 +75,7 @@ export class StreamingClaudeAgentRunner implements WorkerRunner {
     const before = await ctx.git.head();
     const child: ChildProcessWithoutNullStreams = spawn(bin, args, {
       cwd: ctx.worktree,
-      shell: this.opts.shell ?? false,
+      shell: shouldUseShell(bin, this.opts.shell),
       env: { ...process.env, ...this.opts.env },
     });
 

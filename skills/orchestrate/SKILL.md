@@ -17,8 +17,8 @@ checkpoints their state, and a merge-train integrates the branches into `main` â
 serializing merges, running a test gate after each, and negotiating conflicts
 (textual *and* semantic) before promoting `main`.
 
-`harness` lives at `/home/will/harness` (run via `npm run harness -- <args>`
-there, or `node --import tsx /home/will/harness/src/cli.ts <args>`).
+`harness` lives at `C:\code\harness` (run via `npm run harness -- <args>`
+there, or `node --import tsx C:\code\harness\src\cli.ts <args>`).
 
 ## When to use vs. not
 
@@ -53,7 +53,7 @@ Write it to a tasks file, e.g. `tasks.json`:
 }
 ```
 
-See `/home/will/harness/examples/tasks.example.json`.
+See `C:\code\harness\examples\tasks.example.json`.
 
 ### 2. Run the fleet
 
