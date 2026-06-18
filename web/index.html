@@ -872,6 +872,7 @@
           const r = await fetch("/api/status");
           const s = await r.json();
           driveHydra(s);
+          driveAudio(s);
           $("repo").textContent = s.repoRoot;
           $("updated").textContent = "updated " + new Date(s.generatedAt).toLocaleTimeString();
           $("integration").innerHTML = renderIntegration(s.integration);
@@ -983,6 +984,66 @@
         const frame = $("hydra-frame");
         if (frame) frame.addEventListener("load", () => { if (lastFleet) driveHydra(lastFleet); });
       })();
+
+      // ---- Sound effects: ring on fleet-state transitions. Each play uses a
+      // fresh clone so several can sound at once — e.g. a task completing while
+      // its branch lands in main — rather than cutting each other off. ----
+      const SOUNDS = {
+        workerSpawned: "/sounds/worker-spawned.mp3",
+        taskComplete: "/sounds/task-complete.mp3",
+        integrationCompleted: "/sounds/integration-completed.mp3",
+      };
+      const soundEls = {};
+      for (const [k, src] of Object.entries(SOUNDS)) {
+        const a = new Audio(src);
+        a.preload = "auto";
+        soundEls[k] = a;
+      }
+      function playSound(name) {
+        const base = soundEls[name];
+        if (!base) return;
+        const voice = base.cloneNode(true); // independent voice so triggers layer
+        voice.play().catch(() => {}); // browsers may block until a user gesture
+      }
+
+      // Transition tracking kept separate from the hydra's so the two never
+      // interfere. The first tick primes the baseline silently — a page reload
+      // mid-fleet shouldn't replay spawns/completions that already happened.
+      let audioPrimed = false;
+      const knownWorkers = new Set();
+      const audioPrevState = {};
+      let lastIntegrationStamp = null;
+      function driveAudio(s) {
+        const workers = s.workers || [];
+        const stamp = s.integration && s.integration.updatedAt;
+        if (!audioPrimed) {
+          workers.forEach((w) => { knownWorkers.add(w.branch); audioPrevState[w.branch] = w.state; });
+          lastIntegrationStamp = stamp || null;
+          audioPrimed = true;
+          return;
+        }
+        // A new worker appeared in the Workers panel (registry-backed workers
+        // only — transcript-only agents under the Agents tab don't ring).
+        workers.forEach((w) => {
+          if (!knownWorkers.has(w.branch)) {
+            knownWorkers.add(w.branch);
+            playSound("workerSpawned");
+          }
+        });
+        // A worker's task just finished: any prior state -> completed.
+        workers.forEach((w) => {
+          const prev = audioPrevState[w.branch];
+          if (w.state === "completed" && prev && prev !== "completed") {
+            playSound("taskComplete");
+          }
+          audioPrevState[w.branch] = w.state;
+        });
+        // An integration run landed — updatedAt advances once per finished run.
+        if (stamp && stamp !== lastIntegrationStamp) {
+          lastIntegrationStamp = stamp;
+          playSound("integrationCompleted");
+        }
+      }
 
       tick();
       setInterval(tick, 2000);

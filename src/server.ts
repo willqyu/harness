@@ -293,6 +293,19 @@ export function startServer(opts: ServerOptions): http.Server {
         const branches = await readBranchLog(opts.repoRoot);
         return send(res, 200, "application/json", JSON.stringify({ branches }));
       }
+      // Sound effects for the dashboard — served as binary audio from web/sounds.
+      // Filename is basename-sanitized to keep the read inside the sounds dir.
+      if (url.pathname.startsWith("/sounds/")) {
+        const name = path.basename(url.pathname);
+        if (!/^[a-zA-Z0-9._-]+\.mp3$/.test(name)) return send(res, 404, "text/plain", "not found");
+        try {
+          const buf = await readFile(path.join(WEB_DIR, "sounds", name));
+          res.writeHead(200, { "content-type": "audio/mpeg", "cache-control": "max-age=3600" });
+          return res.end(buf);
+        } catch {
+          return send(res, 404, "text/plain", "not found");
+        }
+      }
       if (url.pathname === "/" || url.pathname === "/index.html") {
         const html = await readFile(path.join(WEB_DIR, "index.html"), "utf8");
         return send(res, 200, "text/html; charset=utf-8", html);
