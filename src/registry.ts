@@ -24,6 +24,14 @@ export interface RegistryEntry {
  */
 export class Registry {
   private readonly entries = new Map<string, RegistryEntry>();
+  /** Branches explicitly removed by this process — never re-add them on flush. */
+  private readonly removed = new Set<string>();
+  /** Branches THIS instance has actually written — the only ones whose in-memory
+   *  value overrides disk on flush. Everything else reflects the latest disk
+   *  state, so a long-lived reader (e.g. the dashboard's 2s status poll) can't
+   *  clobber a concurrent writer's — or a manual repair's — change to a branch it
+   *  merely loaded but never touched. */
+  private readonly dirty = new Set<string>();
 
   private constructor(private readonly file: string) {}
 
@@ -54,18 +62,44 @@ export class Registry {
   async upsert(entry: Omit<RegistryEntry, "updatedAt">): Promise<void> {
     const prev = this.entries.get(entry.branch);
     this.entries.set(entry.branch, { ...prev, ...entry, updatedAt: new Date().toISOString() });
+    this.dirty.add(entry.branch);
     await this.flush();
   }
 
   /** Drop a branch's entry (e.g. after deleting an invalid branch). */
   async remove(branch: string): Promise<boolean> {
     const had = this.entries.delete(branch);
-    if (had) await this.flush();
+    this.removed.add(branch); // tombstone so the merge-flush won't resurrect it
+    this.dirty.delete(branch);
+    await this.flush();
     return had;
   }
 
   private async flush(): Promise<void> {
     await mkdir(path.dirname(this.file), { recursive: true });
-    await writeFile(this.file, JSON.stringify(this.all(), null, 2), "utf8");
+    // Start from CURRENT disk state so concurrent writers' changes survive, then
+    // impose ONLY what this instance actually changed: dirty entries override,
+    // tombstoned removes delete. Branches we merely loaded at open() are left as
+    // disk has them — that's what stops the dashboard's status poll from reverting
+    // a repair or another process's write to a branch it never touched.
+    const merged = new Map<string, RegistryEntry>();
+    try {
+      const disk = JSON.parse(await readFile(this.file, "utf8")) as RegistryEntry[];
+      for (const e of disk) merged.set(e.branch, e);
+    } catch {
+      // No file yet, or unreadable — start from our own dirty entries alone.
+    }
+    for (const b of this.dirty) {
+      const e = this.entries.get(b);
+      if (e) merged.set(b, e);
+    }
+    for (const b of this.removed) merged.delete(b);
+
+    // Sync our in-memory view to exactly what we're writing.
+    this.entries.clear();
+    for (const [b, e] of merged) this.entries.set(b, e);
+    this.dirty.clear();
+
+    await writeFile(this.file, JSON.stringify([...merged.values()], null, 2), "utf8");
   }
 }

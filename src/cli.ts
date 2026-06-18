@@ -4,7 +4,8 @@ import path from "node:path";
 import { Git } from "./git.js";
 import { Orchestrator } from "./orchestrator.js";
 import { ClaudeAgentRunner } from "./worker.js";
-import { StreamingClaudeAgentRunner } from "./streaming-worker.js";
+import { StreamingClaudeAgentRunner, STREAMING_DEFAULT_ARGS } from "./streaming-worker.js";
+import { loadConfig, roleArgs, type HarnessConfig } from "./config.js";
 import { InboxManager } from "./inbox.js";
 import { Integrator } from "./integrator.js";
 import { Negotiator } from "./negotiator.js";
@@ -13,7 +14,7 @@ import { HarnessEvents } from "./events.js";
 import { Registry } from "./registry.js";
 import { CheckpointManager } from "./checkpoint.js";
 import { superviseTask, singleFallback, nameBranch, type SupervisorPlan } from "./supervisor.js";
-import { readFleetStatus } from "./status.js";
+import { readFleetStatus, reconcileOrphanedWorkers } from "./status.js";
 import { startServer } from "./server.js";
 import type { TaskSpec } from "./types.js";
 
@@ -44,6 +45,13 @@ function parseArgs(argv: string[]): Flags {
 const str = (f: Flags, k: string, d = ""): string => (typeof f[k] === "string" ? (f[k] as string) : d);
 const num = (f: Flags, k: string, d: number): number => (typeof f[k] === "string" ? Number(f[k]) : d);
 
+/** Resolve the integration trunk: main, else master, else the current branch. */
+async function resolveMain(git: Git): Promise<string> {
+  if ((await git.tryRun(["rev-parse", "--verify", "--quiet", "main"])).code === 0) return "main";
+  if ((await git.tryRun(["rev-parse", "--verify", "--quiet", "master"])).code === 0) return "master";
+  return (await git.tryRun(["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim() || "HEAD";
+}
+
 /** Agent CLI args, with --dangerous enabling fully autonomous runs. */
 function agentArgs(f: Flags): string[] {
   return f.dangerous
@@ -51,19 +59,24 @@ function agentArgs(f: Flags): string[] {
     : ["-p", "--permission-mode", "acceptEdits"];
 }
 
-/** Build the worker runner the run/plan commands share (interactive or one-shot). */
-function makeRunner(f: Flags, events: HarnessEvents) {
+/** Build the worker runner the run/plan commands share (interactive or one-shot).
+ *  Applies the repo's configured default model + extra system prompt for workers. */
+function makeRunner(f: Flags, events: HarnessEvents, cfg: HarnessConfig, modelOverride?: string) {
+  // A per-run model (picked in the Spawn panel / `--model`) wins over config.
+  const worker = roleArgs(cfg, "worker", modelOverride || str(f, "model") || undefined);
   if (f.interactive) {
     console.log("interactive mode — steer agents via `harness inject` or the dashboard");
     return new StreamingClaudeAgentRunner({
       bin: str(f, "agent-bin") || undefined,
+      args: [...STREAMING_DEFAULT_ARGS, ...worker],
       events,
+      ...(typeof f["idle-grace-ms"] === "string" ? { idleGraceMs: num(f, "idle-grace-ms", 120000) } : {}),
       logger: (m) => console.log("  " + m),
     });
   }
   return new ClaudeAgentRunner({
     bin: str(f, "agent-bin") || undefined,
-    args: agentArgs(f),
+    args: [...agentArgs(f), ...worker],
     logger: (m) => console.log("  " + m),
   });
 }
@@ -72,12 +85,13 @@ async function runFleet(
   repo: string,
   tasks: TaskSpec[],
   f: Flags,
-  opts: { concurrency?: number; baseRef?: string } = {},
+  opts: { concurrency?: number; baseRef?: string; model?: string } = {},
 ): Promise<void> {
   const events = logEvents();
+  const cfg = await loadConfig(repo);
   const result = await new Orchestrator({
     repoRoot: repo,
-    runner: makeRunner(f, events),
+    runner: makeRunner(f, events, cfg, opts.model),
     concurrency: num(f, "concurrency", opts.concurrency ?? 4),
     baseRef: str(f, "base") || opts.baseRef || undefined,
     events,
@@ -93,7 +107,7 @@ async function cmdRun(f: Flags): Promise<void> {
   if (!file) throw new Error("usage: harness run <tasks.json> [--repo .] [--concurrency N] [--base REF] [--dangerous]");
   const parsed = JSON.parse(await readFile(path.resolve(file), "utf8"));
   const tasks: TaskSpec[] = Array.isArray(parsed) ? parsed : parsed.tasks;
-  await runFleet(repo, tasks, f, { concurrency: parsed.concurrency, baseRef: parsed.baseRef });
+  await runFleet(repo, tasks, f, { concurrency: parsed.concurrency, baseRef: parsed.baseRef, model: parsed.model });
 }
 
 /**
@@ -112,6 +126,7 @@ async function cmdPlan(f: Flags): Promise<void> {
     branch?: string;
     mode?: "single" | "auto" | "split";
     continueFrom?: string;
+    model?: string;
   };
   if (!req.description?.trim()) throw new Error("request.description is required");
 
@@ -122,8 +137,10 @@ async function cmdPlan(f: Flags): Promise<void> {
   // When continuing an UN-integrated branch, stack commits on it in place; only
   // fork a fresh branch when the source already landed in main.
   let attachBranch = false;
+  const cfg = await loadConfig(repo);
+  const supervisorArgs = [...agentArgs(f), ...roleArgs(cfg, "supervisor")];
   // Branch names come from a Claude summary of the task, not the first few words.
-  const named = (d: string) => nameBranch(d, { repoRoot: repo, args: agentArgs(f), logger: (m) => console.log(m) });
+  const named = (d: string) => nameBranch(d, { repoRoot: repo, args: supervisorArgs, logger: (m) => console.log(m) });
 
   if (req.continueFrom) {
     const cont = await buildContinuation(repo, req.continueFrom, originalDesc);
@@ -147,7 +164,7 @@ async function cmdPlan(f: Flags): Promise<void> {
   } else {
     plan = await superviseTask(description, {
       repoRoot: repo,
-      args: agentArgs(f),
+      args: supervisorArgs,
       logger: (m) => console.log(m),
     });
     // Honor an explicit/continuation branch name when the supervisor kept it single.
@@ -164,7 +181,7 @@ async function cmdPlan(f: Flags): Promise<void> {
   for (const t of plan.tasks) {
     console.log(`  • ${t.branch} (p${t.priority ?? "-"}${t.blockedBy?.length ? ", after " + t.blockedBy.join("+") : ""})`);
   }
-  await runFleet(repo, plan.tasks, f, { baseRef });
+  await runFleet(repo, plan.tasks, f, { baseRef, model: req.model });
 }
 
 /** Assemble a continuation brief from a prior branch's checkpoint + commits,
@@ -212,6 +229,9 @@ async function cmdIntegrate(f: Flags): Promise<void> {
     ? str(f, "branches").split(",").map((b) => b.trim()).filter(Boolean)
     : [];
   if (branches.length === 0) {
+    // Repair any frozen `running` entries from crashed runs so finished-but-stuck
+    // branches are integrated rather than silently skipped.
+    await reconcileOrphanedWorkers(repo).catch(() => {});
     const reg = await Registry.open(path.join(repo, ".harness", "registry.json"));
     let completed = reg.all().filter((e) => e.state === "completed");
     if (prioritized) {
@@ -221,8 +241,31 @@ async function cmdIntegrate(f: Flags): Promise<void> {
   }
   if (branches.length === 0) throw new Error("no branches to integrate (pass --branches a,b or run first)");
 
+  // Drop branches that no longer exist or have already landed in main. Re-merging
+  // an already-integrated branch is a no-op that can spuriously fail the train and
+  // strand genuinely-new branches behind it.
+  const git = new Git(repo);
+  const mainBranch = str(f, "main") || (await resolveMain(git));
+  const live: string[] = [];
+  const dropped: string[] = [];
+  for (const b of branches) {
+    if ((await git.tryRun(["rev-parse", "--verify", "--quiet", b])).code !== 0) { dropped.push(`${b} (missing)`); continue; }
+    if ((await git.tryRun(["merge-base", "--is-ancestor", b, mainBranch])).code === 0) { dropped.push(`${b} (already in ${mainBranch})`); continue; }
+    live.push(b);
+  }
+  if (dropped.length) console.log(`skipping ${dropped.length}: ${dropped.join(", ")}`);
+  branches = live;
+  if (branches.length === 0) {
+    console.log(`nothing to integrate — all completed branches already landed in ${mainBranch}`);
+    return;
+  }
+
   const testCommand = str(f, "test") || undefined;
-  const resolver = new ClaudeConflictResolver({ bin: str(f, "agent-bin") || undefined, args: agentArgs(f) });
+  const cfg = await loadConfig(repo);
+  const resolver = new ClaudeConflictResolver({
+    bin: str(f, "agent-bin") || undefined,
+    args: [...agentArgs(f), ...roleArgs(cfg, "negotiator")],
+  });
   const negotiator = new Negotiator({
     resolvers: [resolver],
     tieBreaker: resolver,
@@ -233,7 +276,7 @@ async function cmdIntegrate(f: Flags): Promise<void> {
   console.log(`integrating: ${branches.join(", ")}`);
   const result = await new Integrator({
     repoRoot: repo,
-    mainBranch: str(f, "main") || undefined,
+    mainBranch,
     testCommand,
     negotiator,
     continueOnUnresolved: prioritized,
